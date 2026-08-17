@@ -109,8 +109,10 @@ Run the installer:
 ```
 
 The script copies the three packages, patches the profile, and creates the
-`artifact` agent preset. It is idempotent — run it again to reinstall or to
-pick up changes. Then restart DeepSeek Harness:
+`artifact` agent preset. For the preset base it uses the `standard` preset that
+ships with your installed DeepSeek Harness (so it matches your version),
+falling back to a frozen copy shipped in this repo. It is idempotent — run it
+again to reinstall or to pick up changes. Then restart DeepSeek Harness:
 
 ```sh
 ollama launch dsh

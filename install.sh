@@ -73,12 +73,39 @@ append_if_missing "default: artifact" "
 # ── 3. Create the agent preset ───────────────────────────────────────────────
 mkdir -p "$PRESET_DIR"
 
-STANDARD_PRESET="$DSH_HOME/.agent-presets/standard/agent.cordis.yml"
-if [ -f "$STANDARD_PRESET" ]; then
+# Locate a `standard` preset to use as the base. Prefer the one that ships with
+# the installed DeepSeek Harness (so it matches the running version), then fall
+# back to the frozen copy shipped in this repo.
+find_standard_preset() {
+  local candidate dsh_real pkg_root
+
+  # 1. Resolve the `dsh` binary and derive its package root.
+  if command -v dsh >/dev/null 2>&1; then
+    dsh_real="$(readlink -f "$(command -v dsh)" 2>/dev/null || command -v dsh)"
+    pkg_root="$(dirname "$(dirname "$dsh_real")")"
+    candidate="$pkg_root/config/agent-presets/standard/agent.cordis.yml"
+    [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  fi
+
+  # 2. npm global root.
+  if command -v npm >/dev/null 2>&1; then
+    candidate="$(npm root -g 2>/dev/null)/@deepseek-ai/dsh/config/agent-presets/standard/agent.cordis.yml"
+    [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  fi
+
+  # 3. Frozen copy shipped in this repo.
+  candidate="$REPO_DIR/presets/standard/agent.cordis.yml"
+  [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+
+  return 1
+}
+
+STANDARD_PRESET="$(find_standard_preset || true)"
+if [ -n "$STANDARD_PRESET" ]; then
   cp "$STANDARD_PRESET" "$PRESET_DIR/agent.cordis.yml"
-  echo "  ✓ copied standard preset"
+  echo "  ✓ copied standard preset ($STANDARD_PRESET)"
 else
-  echo "  ! standard preset not found at $STANDARD_PRESET" >&2
+  echo "  ! could not find a standard preset" >&2
   echo "    create $PRESET_DIR/agent.cordis.yml manually, then add:" >&2
   echo "      - id: tool-artifact" >&2
   echo "        name: '@dsh-artifact/tool-artifact'" >&2
