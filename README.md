@@ -6,6 +6,8 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4f46e5.svg)](https://github.com/deepseek-ai/deepseek-harness)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
+![DeepSeek Harness Artifact Canvas rendering an artifact in the side panel](docs/hero.png)
+
 The Artifact Canvas brings Claude- and Gemini-style artifacts to
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). When the
 model builds a web page, a document, or a code file, the canvas renders it in a
