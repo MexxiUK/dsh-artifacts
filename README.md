@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4f46e5.svg)](https://github.com/deepseek-ai/deepseek-harness)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Release](https://img.shields.io/github/v/release/MexxiUK/dsh-artifacts)](https://github.com/MexxiUK/dsh-artifacts/releases)
 
 ![DeepSeek Harness Artifact Canvas rendering an artifact in the side panel](docs/hero.png)
 
