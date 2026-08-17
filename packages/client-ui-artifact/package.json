@@ -1,6 +1,6 @@
 {
   "name": "@dsh-artifact/client-ui-artifact",
-  "description": "Canvas viewer for HTML and Markdown artifacts: side-panel canvas, inline tool card, and sandboxed renderers",
+  "description": "Canvas for HTML, Markdown, and code artifacts: side panel, inline card, and renderers.",
   "version": "0.1.0",
   "type": "module",
   "main": "lib/index.js",

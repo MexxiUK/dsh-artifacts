@@ -1,81 +1,89 @@
 # DSH Artifact Canvas
 
-A Claude/Gemini-parity Artifact viewer for DeepSeek Harness: a side-panel canvas
-in the `details` column that renders **HTML** (sandboxed iframe), **Markdown**,
-and **source code** (shiki syntax highlighting) artifacts, driven by a new
-`artifact` tool. The canvas is **extensible** (other plugins register
-renderers/chrome/panels into its child slots), **interactive** (HTML artifacts
-can `postMessage` a selection back to the model, and the user can drag-select a
-region to ask about it), and **live** (a badge marks the current artifact vs.
-older ones). Opening the canvas left-aligns the chat Gemini-style via a forked
-layout.
+This plugin adds an Artifact canvas to DeepSeek Harness. The canvas renders
+HTML, Markdown, and source code in a side panel. A new `artifact` tool drives
+the canvas.
+
+The canvas has these features:
+
+- **Extensible.** Other plugins add renderers, chrome, and panels through child
+  slots.
+- **Interactive.** HTML artifacts send a selection back to the model. The user
+  can also drag-select a region to ask about it.
+- **Live.** A badge marks the current artifact.
+
+The canvas opens in the `details` column. It left-aligns the chat, like Gemini.
 
 ## Packages
 
 | Package | Plane | Role |
 |---|---|---|
-| `packages/tool-artifact` | host (agent preset) | Registers the `artifact` tool (`create`/`update`, `title`, `type: html\|markdown\|code`, `content`, `language`) + a system-prompt section. |
-| `packages/client-ui-artifact` | browser | Registers the `details` side-panel canvas, a keyed `tool.call.toolview` inline card, the sandboxed renderers, the select-and-ask loop, the interaction loop, and the liveness badge. |
-| `packages/client-ui-layout` | browser | Fork of `dsh-client-ui-layout` with **wide-details**: `openDetails()` opens at ~55% of the viewport, and the drag handle resizes up to ~70% (the center column's minimum was relaxed from 640px to 320px so the canvas can take most of the screen, Gemini-style). |
+| `packages/tool-artifact` | host (agent preset) | Registers the `artifact` tool and a system-prompt section. |
+| `packages/client-ui-artifact` | browser | Registers the canvas, the inline card, the renderers, the select-and-ask loop, and the liveness badge. |
+| `packages/client-ui-layout` | browser | A fork of `dsh-client-ui-layout` with wide details. |
 
 ## How it works
 
 1. The model calls `artifact` with `action: create` and the artifact source.
-2. The tool's `output.presentationMeta` persists the artifact envelope
-   (`artifact_id`, `title`, `type`, `content`, `language`, `version`) as the
-   durable `tool/result` `meta`.
-3. The inline card (`tool.call.toolview` key `artifact`) reads that `meta` and
-   renders a preview + an "Open in canvas" button.
-4. "Open in canvas" selects the artifact and calls `ctx.layout.openDetails()`,
-   opening the side panel, which renders Markdown via `MarkdownText`, HTML via
-   a sandboxed `<iframe sandbox="allow-scripts" srcDoc=…>` (opaque origin, no
-   `allow-same-origin`), or source code via the primitives `CodeBlock` (shiki
-   syntax highlighting keyed by `language`).
-5. A **Preview / Code** segmented toggle flips between the rendered view and the
-   raw source; the Code view is syntax-highlighted (shiki) keyed by the
-   artifact's `language` (markdown, html, or the code language).
+2. The tool stores the artifact envelope in the tool result `meta`. The envelope
+   holds `artifact_id`, `title`, `type`, `content`, `language`, and `version`.
+3. The inline card reads the `meta`. It shows a preview and an "Open in canvas"
+   button.
+4. "Open in canvas" selects the artifact. It calls `ctx.layout.openDetails()`.
+   The side panel opens. It renders Markdown with `MarkdownText`, HTML in a
+   sandboxed iframe, or source code with `CodeBlock`.
+5. A **Preview / Code** toggle switches between the rendered view and the raw
+   source. The Code view shows syntax highlighting. The highlighting uses the
+   artifact `language`.
 
 ## Extensibility (child slots)
 
-The canvas declares four child slots in its `details` registration, so other
-plugins extend it without touching its core:
+The canvas declares four child slots. Other plugins use these slots to extend
+the canvas.
 
 | Slot | Kind | What plugins add |
 |---|---|---|
-| `artifact.renderer` | keyed by artifact `type` | New renderers (`mermaid`, `react`, `svg`, …). Built-in: `html`, `markdown`, `code`. |
-| `artifact.interaction` | list | postMessage handlers for the iframe. Each entry mounts a listener (via `useEffect`) and renders nothing — a hook surface, not a visual region. |
-| `artifact.chrome` | list | Toolbar buttons / status indicators in the canvas header. |
-| `artifact.panel` | list | Extra panels/tabs inside the canvas. |
+| `artifact.renderer` | keyed by artifact `type` | New renderers. Built-in: `html`, `markdown`, `code`. |
+| `artifact.interaction` | list | postMessage handlers for the iframe. |
+| `artifact.chrome` | list | Toolbar buttons and status indicators. |
+| `artifact.panel` | list | Extra panels and tabs. |
 
-Register into them exactly like any DSH slot, e.g.
-`ctx.slots.inject("artifact.renderer", () => ctx.slots.register({ name: "artifact.renderer", key: "mermaid" }, MermaidRenderer))`.
+Register into a slot like any DSH slot:
+
+```js
+ctx.slots.inject("artifact.renderer", () =>
+  ctx.slots.register({ name: "artifact.renderer", key: "mermaid" }, MermaidRenderer),
+);
+```
 
 ## Interaction loop
 
-HTML artifacts run in an opaque-origin iframe. The artifact may
-`postMessage({ v: 1, type: "artifact:select", value, label })` to the parent; the
-canvas validates `event.origin === "null"` and feeds the selection back to the
-model as a queued user message (`session.prompt(…, "queue")`).
+HTML artifacts run in an opaque-origin iframe. The artifact can send
+`postMessage({ v: 1, type: "artifact:select", value, label })` to the parent.
+The canvas checks `event.origin === "null"`. It then feeds the selection to the
+model as a queued user message.
 
 ## Select and ask
 
-The canvas header has a **Select** button. Clicking it enters select mode: a
-crosshair overlay covers the preview, and dragging draws a highlighted rectangle.
-On release a small popup appears — type a question or describe an issue and
-press Enter (or **Send**). The canvas extracts the text under the selection (for
-Markdown/code; for HTML it reports the region geometry, since the iframe is
-opaque-origin) and feeds it to the model as a queued user message alongside your
-question.
+The canvas header has a **Select** button. Click the button to enter select
+mode. A crosshair overlay covers the preview. Drag to draw a rectangle. Release
+to show a popup. Type a question or describe an issue. Press Enter or click
+**Send**.
+
+The canvas extracts the text under the selection. For Markdown and code, it
+extracts the text. For HTML, it reports the region geometry. The iframe is
+opaque-origin, so the parent cannot read its text. The canvas feeds the text
+and your question to the model as a queued user message.
 
 ## Liveness
 
-The canvas badges the selected artifact **Live** (green, pulsing) while it is the
-most recently produced one, and **Older** (muted) otherwise.
+The canvas marks the selected artifact **Live** (green, pulsing) while it is
+the latest one. It marks older artifacts **Older** (muted).
 
 ## Build
 
-The client bundle is built with esbuild into the `window.__ModuleLoader__.load`
-format the module loader expects:
+Build the client bundle with esbuild. The bundle uses the
+`window.__ModuleLoader__.load` format.
 
 ```sh
 cd packages/client-ui-artifact
@@ -90,41 +98,36 @@ npx esbuild src/client.tsx \
 
 ## Composition (already applied)
 
-- **Packages** installed at `$DSH_HOME/profiles/node_modules/@dsh-artifact/`.
-- **Client plugin** added to `$DSH_HOME/profiles/web/cordis.patch.yml`. The
-  `details` registration shadows the built-in `DetailsPanel` by registering at
-  `priority: -10` (the codebase's shadowing convention, cf.
-  `dsh-client-ui-subagent`). **Do not rely on load order**: the loader applies
-  entries in parallel (`Promise.allSettled`), so a small local plugin can apply
-  before a large bundled one regardless of list position — two registrations at
-  the same priority on a single slot throw and take down the whole plugin load.
-- **Agent preset** `artifact` created at `$DSH_HOME/.agent-presets/artifact/`
-  (a copy of `standard` + the `tool-artifact` row), and set as the default via
-  the `agent-presets` config override.
-- **Layout fork** `@dsh-artifact/client-ui-layout` installed and swapped in via
-  the patch layer: the shipped `ui-layout` row is `disabled: true` and the fork
-  is inserted as `ui-layout-wide` (a patch cannot rename a row, so it is a
-  disable + insert).
+- Install the packages at `$DSH_HOME/profiles/node_modules/@dsh-artifact/`.
+- Add the client plugin to `$DSH_HOME/profiles/web/cordis.patch.yml`. The
+  `details` registration shadows the built-in `DetailsPanel`. It registers at
+  `priority: -10`. Do not rely on load order. The loader applies entries in
+  parallel. Two registrations at the same priority on one slot throw and stop
+  the plugin load.
+- Create the agent preset `artifact` at `$DSH_HOME/.agent-presets/artifact/`.
+  It is a copy of `standard` plus the `tool-artifact` row. Set it as the
+  default.
+- Install the layout fork `@dsh-artifact/client-ui-layout`. Swap it in through
+  the patch layer. Disable the shipped `ui-layout` row. Insert the fork as
+  `ui-layout-wide`.
 
 ## Restart to apply
 
-The running server hot-reloads the **patch layer** in-process (`watchUserPatches`
-re-composes `cordis.patch.yml` on change) and re-reads **bundle files** on each
-request (the `?rev=` hash updates), so patch and bundle edits need only a page
-refresh. **package.json metadata** (`dsh.client.inject`) is read at boot, so a
-change there needs a full `ollama launch dsh` restart — until then the stale
-`inject` ordering hint is harmless (the cordis runtime defers each plugin's
-`apply` until its declared services arrive).
+The server hot-reloads the patch layer. It re-reads bundle files on each
+request. So patch and bundle edits need only a page refresh. The server reads
+the `package.json` metadata (`dsh.client.inject`) at boot. A change there needs
+a full `ollama launch dsh` restart. Until then, the stale `inject` hint is
+harmless. The cordis runtime defers each plugin `apply` until its services
+arrive.
 
 ## Known limitations
 
-- One selected artifact at a time (no per-session keying yet).
-- Version history is recorded in the log but not yet surfaced in a switcher.
-- HTML runs scripts in an opaque-origin sandbox; no CSP meta is injected yet.
+- One selected artifact at a time. There is no per-session keying yet.
+- Version history is in the log. There is no version switcher yet.
+- HTML runs scripts in an opaque-origin sandbox. There is no CSP meta yet.
 - Localization is hardcoded English.
-- The built-in interaction loop handles `artifact:select` only; additional
-  message types are registered through the `artifact.interaction` slot (each
-  entry mounts its own `postMessage` listener). Sending messages *back* to the
-  iframe (a `send` handle) is a follow-up.
-- The layout fork is a byte-copy of `dsh-client-ui-layout` with the wide-details
-  change; it must be re-synced if the upstream layout changes.
+- The built-in interaction loop handles `artifact:select` only. Other message
+  types use the `artifact.interaction` slot. The canvas cannot send messages
+  back to the iframe yet.
+- The layout fork is a byte-copy of `dsh-client-ui-layout`. Re-sync it if the
+  upstream layout changes.

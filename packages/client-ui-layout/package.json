@@ -1,6 +1,6 @@
 {
   "name": "@dsh-artifact/client-ui-layout",
-  "description": "Shell plugin: three-column AppFrame with drag handles, ctx.layout viewing-state service (navigation + panels)",
+  "description": "Layout fork with wide details: the canvas opens at ~55% and resizes to ~70% of the viewport.",
   "version": "0.1.0-rc.6",
   "publishConfig": {
     "access": "public"
