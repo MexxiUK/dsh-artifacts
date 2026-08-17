@@ -7,7 +7,9 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Release](https://img.shields.io/github/v/release/MexxiUK/dsh-artifacts)](https://github.com/MexxiUK/dsh-artifacts/releases)
 
-![DeepSeek Harness Artifact Canvas rendering an artifact in the side panel](docs/hero.png)
+<video src="docs/hero.webm" autoplay muted loop playsinline poster="docs/hero.png" style="max-width: 100%;">
+  DeepSeek Harness Artifact Canvas rendering an artifact in the side panel.
+</video>
 
 The Artifact Canvas brings Claude- and Gemini-style artifacts to
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). When the
