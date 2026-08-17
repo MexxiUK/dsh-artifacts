@@ -1,18 +1,36 @@
-# DSH Artifact Canvas
+# DeepSeek Harness Artifact Canvas
 
-This plugin adds an Artifact canvas to DeepSeek Harness. The canvas renders
-HTML, Markdown, and source code in a side panel. A new `artifact` tool drives
-the canvas.
+**Render HTML, Markdown, and code in a side panel — with syntax highlighting, select-and-ask, and an extensible plugin API.**
 
-The canvas has these features:
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-- **Extensible.** Other plugins add renderers, chrome, and panels through child
-  slots.
-- **Interactive.** HTML artifacts send a selection back to the model. The user
-  can also drag-select a region to ask about it.
-- **Live.** A badge marks the current artifact.
+The Artifact Canvas brings Claude- and Gemini-style artifacts to
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). When the
+model builds a web page, a document, or a code file, the canvas renders it in a
+dedicated side panel instead of dumping raw text into the chat.
 
-The canvas opens in the `details` column. It left-aligns the chat, like Gemini.
+## The problem
+
+DeepSeek Harness is a powerful coding agent, but it has no first-class way to
+*show* what the model produces. A generated HTML page, a Markdown report, or a
+code file appears as plain text in the conversation. You cannot render it,
+inspect it, or ask a question about a specific part of it.
+
+## What this plugin solves
+
+This plugin adds a dedicated **Artifact canvas** to the `details` column. The
+model writes artifacts through a new `artifact` tool, and the canvas renders
+them live. You can:
+
+- **Render HTML, Markdown, and code** in a sandboxed, scrollable panel.
+- **Read code with syntax highlighting** (shiki) — no more raw text.
+- **Select and ask** — drag a rectangle over any region and ask the model about
+  it.
+- **Extend it** — other plugins add renderers, toolbar buttons, and panels
+  through child slots.
+- **Track liveness** — a badge marks the current artifact versus older versions.
+- **Work in a wide layout** — the canvas opens at ~55% and resizes to ~70% of
+  the viewport, Gemini-style.
 
 ## Packages
 
@@ -35,6 +53,18 @@ The canvas opens in the `details` column. It left-aligns the chat, like Gemini.
 5. A **Preview / Code** toggle switches between the rendered view and the raw
    source. The Code view shows syntax highlighting. The highlighting uses the
    artifact `language`.
+
+## Select and ask
+
+The canvas header has a **Select** button. Click the button to enter select
+mode. A crosshair overlay covers the preview. Drag to draw a rectangle. Release
+to show a popup. Type a question or describe an issue. Press Enter or click
+**Send**.
+
+The canvas extracts the text under the selection. For Markdown and code, it
+extracts the text. For HTML, it reports the region geometry. The iframe is
+opaque-origin, so the parent cannot read its text. The canvas feeds the text
+and your question to the model as a queued user message.
 
 ## Extensibility (child slots)
 
@@ -63,22 +93,25 @@ HTML artifacts run in an opaque-origin iframe. The artifact can send
 The canvas checks `event.origin === "null"`. It then feeds the selection to the
 model as a queued user message.
 
-## Select and ask
-
-The canvas header has a **Select** button. Click the button to enter select
-mode. A crosshair overlay covers the preview. Drag to draw a rectangle. Release
-to show a popup. Type a question or describe an issue. Press Enter or click
-**Send**.
-
-The canvas extracts the text under the selection. For Markdown and code, it
-extracts the text. For HTML, it reports the region geometry. The iframe is
-opaque-origin, so the parent cannot read its text. The canvas feeds the text
-and your question to the model as a queued user message.
-
 ## Liveness
 
 The canvas marks the selected artifact **Live** (green, pulsing) while it is
 the latest one. It marks older artifacts **Older** (muted).
+
+## Installation
+
+1. Install the packages at `$DSH_HOME/profiles/node_modules/@dsh-artifact/`.
+2. Add the client plugin to `$DSH_HOME/profiles/web/cordis.patch.yml`. The
+   `details` registration shadows the built-in `DetailsPanel`. It registers at
+   `priority: -10`. Do not rely on load order. The loader applies entries in
+   parallel. Two registrations at the same priority on one slot throw and stop
+   the plugin load.
+3. Create the agent preset `artifact` at `$DSH_HOME/.agent-presets/artifact/`.
+   It is a copy of `standard` plus the `tool-artifact` row. Set it as the
+   default.
+4. Install the layout fork `@dsh-artifact/client-ui-layout`. Swap it in through
+   the patch layer. Disable the shipped `ui-layout` row. Insert the fork as
+   `ui-layout-wide`.
 
 ## Build
 
@@ -95,21 +128,6 @@ npx esbuild src/client.tsx \
   --banner:js='window.__ModuleLoader__.load({ id: "@dsh-artifact/client-ui-artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' \
   --footer:js='return module.exports; } });'
 ```
-
-## Composition (already applied)
-
-- Install the packages at `$DSH_HOME/profiles/node_modules/@dsh-artifact/`.
-- Add the client plugin to `$DSH_HOME/profiles/web/cordis.patch.yml`. The
-  `details` registration shadows the built-in `DetailsPanel`. It registers at
-  `priority: -10`. Do not rely on load order. The loader applies entries in
-  parallel. Two registrations at the same priority on one slot throw and stop
-  the plugin load.
-- Create the agent preset `artifact` at `$DSH_HOME/.agent-presets/artifact/`.
-  It is a copy of `standard` plus the `tool-artifact` row. Set it as the
-  default.
-- Install the layout fork `@dsh-artifact/client-ui-layout`. Swap it in through
-  the patch layer. Disable the shipped `ui-layout` row. Insert the fork as
-  `ui-layout-wide`.
 
 ## Restart to apply
 
