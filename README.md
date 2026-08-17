@@ -100,6 +100,24 @@ the latest one. It marks older artifacts **Older** (muted).
 
 ## Installation
 
+### Quick install
+
+Run the installer:
+
+```sh
+./install.sh
+```
+
+The script copies the three packages, patches the profile, and creates the
+`artifact` agent preset. It is idempotent — run it again to reinstall or to
+pick up changes. Then restart DeepSeek Harness:
+
+```sh
+ollama launch dsh
+```
+
+### Manual install
+
 1. Install the packages at `$DSH_HOME/profiles/node_modules/@dsh-artifact/`.
 2. Add the client plugin to `$DSH_HOME/profiles/web/cordis.patch.yml`. The
    `details` registration shadows the built-in `DetailsPanel`. It registers at
