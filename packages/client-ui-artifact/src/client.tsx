@@ -21,10 +21,12 @@
 // the most recently produced one, and "Older" otherwise.
 import {
   CodeBlock,
+  IconChevronDownOutline14,
   IconCloseOutline16,
   IconCodeOutline16,
   IconCopyOutline16,
   IconDownloadOutline16,
+  IconFullscreenOutline16,
   MarkdownText,
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useEffect, useRef, useSyncExternalStore, useState } from "react";
@@ -32,10 +34,11 @@ import { useEffect, useRef, useSyncExternalStore, useState } from "react";
 const name = "@dsh-artifact/client-ui-artifact";
 const inject = ["slots", "layout", "sessions"];
 
-// ── artifact store (module-level singleton) ─────────────────────────────────
+// ── artifact store (per-session) ────────────────────────────────────────────
 // The selected artifact is shared between the inline card ("Open in canvas")
-// and the canvas panel. `latest` tracks the most recently produced artifact so
-// the canvas can badge liveness. Per-session keying is a follow-up.
+// and the canvas panel, keyed by session id so artifacts never leak across
+// sessions. `latest` tracks the most recently produced artifact so the canvas
+// can badge liveness.
 
 type Artifact = {
   artifact_id: string;
@@ -46,20 +49,45 @@ type Artifact = {
   version?: number;
 };
 
-let selected: Artifact | null = null;
-let latest: Artifact | null = null;
+type SessionState = {
+  selected: Artifact | null;
+  latest: Artifact | null;
+  /** All versions of each artifact, keyed by artifact_id (newest first). */
+  history: Map<string, Artifact[]>;
+};
+/** Per-session artifact state, keyed by session id. */
+const sessions = new Map<string, SessionState>();
 const listeners = new Set<() => void>();
+const EMPTY_VERSIONS: Artifact[] = [];
 
-function getSelected() {
-  return selected;
+function getState(sessionId: string): SessionState {
+  let s = sessions.get(sessionId);
+  if (!s) {
+    s = { selected: null, latest: null, history: new Map() };
+    sessions.set(sessionId, s);
+  }
+  return s;
 }
-function setSelected(a: Artifact | null) {
-  selected = a;
+
+function setSelected(sessionId: string, a: Artifact | null) {
+  getState(sessionId).selected = a;
   for (const l of listeners) l();
 }
-/** Record the most recently produced artifact (drives the liveness badge). */
-function noteArtifact(a: Artifact) {
-  latest = a;
+/** Record a produced artifact: drives the liveness badge and version history. */
+function noteArtifact(sessionId: string, a: Artifact) {
+  const s = getState(sessionId);
+  s.latest = a;
+  // Only completed versions (with a version number) enter the history; a
+  // running call has no version yet and must not appear in the switcher.
+  if (a.version != null) {
+    const list = s.history.get(a.artifact_id) ?? [];
+    if (!list.some((x) => x.version === a.version)) {
+      s.history.set(
+        a.artifact_id,
+        [...list, a].sort((x, y) => (y.version ?? 0) - (x.version ?? 0)),
+      );
+    }
+  }
   for (const l of listeners) l();
 }
 function subscribe(l: () => void) {
@@ -68,17 +96,32 @@ function subscribe(l: () => void) {
     listeners.delete(l);
   };
 }
-function useSelectedArtifact(): Artifact | null {
-  return useSyncExternalStore(subscribe, getSelected, getSelected);
-}
-function useIsLive(artifact: Artifact | null): boolean {
+function useSelectedArtifact(sessionId: string): Artifact | null {
   return useSyncExternalStore(
     subscribe,
-    () =>
-      artifact != null &&
-      latest != null &&
-      artifact.artifact_id === latest.artifact_id &&
-      artifact.version === latest.version,
+    () => getState(sessionId).selected,
+    () => null,
+  );
+}
+function useArtifactVersions(sessionId: string, artifactId: string): Artifact[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => getState(sessionId).history.get(artifactId) ?? EMPTY_VERSIONS,
+    () => EMPTY_VERSIONS,
+  );
+}
+function useIsLive(sessionId: string, artifact: Artifact | null): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      const latest = getState(sessionId).latest;
+      return (
+        artifact != null &&
+        latest != null &&
+        artifact.artifact_id === latest.artifact_id &&
+        artifact.version === latest.version
+      );
+    },
     () => false,
   );
 }
@@ -182,10 +225,10 @@ function LivenessBadge({ live }: { live: boolean }) {
         fontWeight: 600,
         padding: "2px 8px",
         borderRadius: "999px",
-        color: live ? "var(--dsw-alias-success, #16a34a)" : "var(--dsw-alias-label-tertiary)",
+        color: live ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-tertiary)",
         background: live
-          ? "var(--dsw-alias-success-soft, rgba(22,163,74,0.12))"
-          : "var(--dsw-alias-bg-subtle, rgba(128,128,128,0.12))",
+          ? "var(--dsw-alias-state-success-tertiary)"
+          : "var(--dsw-alias-interactive-bg-hover)",
       }}
     >
       <span
@@ -200,6 +243,113 @@ function LivenessBadge({ live }: { live: boolean }) {
       {live ? "Live" : "Older"}
       <style>{`@keyframes dsh-artifact-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }`}</style>
     </span>
+  );
+}
+
+// ── version switcher ─────────────────────────────────────────────────────────
+
+function VersionSwitcher({
+  sessionId,
+  artifact,
+}: {
+  sessionId: string;
+  artifact: Artifact;
+}) {
+  const versions = useArtifactVersions(sessionId, artifact.artifact_id);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close the dropdown on an outside click.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  if (versions.length <= 1) {
+    return <span style={{ opacity: 0.6 }}>v{artifact.version}</span>;
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Switch version"
+        aria-label="Switch version"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "2px",
+          padding: "2px 6px",
+          border: "1px solid var(--dsw-alias-border-l3)",
+          borderRadius: "6px",
+          background: "transparent",
+          cursor: "pointer",
+          fontSize: "12px",
+          color: "var(--dsw-alias-label-secondary)",
+        }}
+      >
+        v{artifact.version}
+        <IconChevronDownOutline14 />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            zIndex: 20,
+            minWidth: "120px",
+            background: "var(--dsw-alias-bg-layer-3)",
+            border: "1px solid var(--dsw-alias-border-l3)",
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+            padding: "4px",
+          }}
+        >
+          {versions.map((v) => (
+            <button
+              key={v.version}
+              role="option"
+              aria-selected={v.version === artifact.version}
+              onClick={() => {
+                setSelected(sessionId, v);
+                setOpen(false);
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+                width: "100%",
+                padding: "4px 8px",
+                border: "none",
+                borderRadius: "4px",
+                background:
+                  v.version === artifact.version
+                    ? "var(--dsw-alias-interactive-bg-active)"
+                    : "transparent",
+                cursor: "pointer",
+                fontSize: "12px",
+                color: "var(--dsw-alias-label-primary)",
+                textAlign: "left",
+              }}
+            >
+              <span>v{v.version}</span>
+              {v.version === versions[0].version && (
+                <span style={{ opacity: 0.6, fontSize: "11px" }}>latest</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -237,6 +387,24 @@ function CursorIcon({ size = 16 }: { size?: number }) {
       aria-hidden
     >
       <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function FullscreenExitIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path
+        d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"
+        fill="currentColor"
+      />
     </svg>
   );
 }
@@ -280,7 +448,7 @@ function ViewToggle({
       style={{
         position: "relative",
         display: "inline-flex",
-        background: "var(--dsw-alias-bg-subtle, rgba(128,128,128,0.12))",
+        background: "var(--dsw-alias-interactive-bg-hover)",
         borderRadius: "999px",
         padding: "2px",
       }}
@@ -442,7 +610,7 @@ function SelectOverlay({
             width: Math.abs(drag.cx - drag.sx),
             height: Math.abs(drag.cy - drag.sy),
             border: "2px solid var(--dsw-alias-state-business-primary, #3b82f6)",
-            background: "rgba(59,130,246,0.12)",
+            background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
             pointerEvents: "none",
           }}
         />
@@ -454,7 +622,8 @@ function SelectOverlay({
 // ── canvas panel (details slot) ─────────────────────────────────────────────
 
 function ArtifactCanvas(props: any) {
-  const artifact = useSelectedArtifact();
+  const sessionId = props.sessionId as string;
+  const artifact = useSelectedArtifact(sessionId);
   const [view, setView] = useState<"preview" | "code">("preview");
   const renderSlot = props.renderSlot as (
     key: string,
@@ -463,7 +632,7 @@ function ArtifactCanvas(props: any) {
   ) => React.ReactNode;
   const closeDetails = props.closeDetails as (() => void) | undefined;
   const prompt = props.prompt as ((text: string) => void) | undefined;
-  const isLive = useIsLive(artifact);
+  const isLive = useIsLive(sessionId, artifact);
 
   // ── select-and-ask state ────────────────────────────────────────────────
   const [selectMode, setSelectMode] = useState(false);
@@ -475,6 +644,23 @@ function ArtifactCanvas(props: any) {
   } | null>(null);
   const [askText, setAskText] = useState("");
   const previewRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Track native fullscreen state so the button can flip between expand/contract.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void rootRef.current?.requestFullscreen();
+    }
+  };
 
   const cancelSelect = () => {
     setSelectMode(false);
@@ -523,19 +709,27 @@ function ArtifactCanvas(props: any) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div
+      ref={rootRef}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "var(--dsw-alias-bg-base)",
+      }}
+    >
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: "8px",
           padding: "8px 12px",
-          borderBottom: "1px solid var(--dsw-alias-border)",
+          borderBottom: "1px solid var(--dsw-alias-border-l3)",
         }}
       >
         <span style={{ fontWeight: 600 }}>{artifact.title}</span>
         {artifact.version != null && (
-          <span style={{ opacity: 0.6 }}>v{artifact.version}</span>
+          <VersionSwitcher sessionId={sessionId} artifact={artifact} />
         )}
         <LivenessBadge live={isLive} />
         <span style={{ flex: 1 }} />
@@ -580,6 +774,14 @@ function ArtifactCanvas(props: any) {
         >
           <IconDownloadOutline16 />
         </button>
+        <button
+          onClick={toggleFullscreen}
+          title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          style={iconButtonStyle}
+        >
+          {isFullscreen ? <FullscreenExitIcon /> : <IconFullscreenOutline16 />}
+        </button>
         {closeDetails && (
           <button
             onClick={closeDetails}
@@ -612,7 +814,7 @@ function ArtifactCanvas(props: any) {
               width: selection.w,
               height: selection.h,
               border: "2px solid var(--dsw-alias-state-business-primary, #3b82f6)",
-              background: "rgba(59,130,246,0.12)",
+              background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
               pointerEvents: "none",
               zIndex: 10,
             }}
@@ -633,7 +835,7 @@ function ArtifactCanvas(props: any) {
               gap: "6px",
               padding: "6px",
               background: "var(--dsw-specific-input-major, #fff)",
-              border: "1px solid var(--dsw-alias-border)",
+              border: "1px solid var(--dsw-alias-border-l3)",
               borderRadius: "8px",
               boxShadow: "var(--dsw-shadow-lv2)",
             }}
@@ -723,18 +925,19 @@ function downloadArtifact(artifact: Artifact) {
 function ArtifactToolRow(props: any) {
   const artifact = artifactFromBlock(props.block);
   const openCanvas = props.openCanvas as (() => void) | undefined;
+  const sessionId = props.sessionId as string | undefined;
 
   // Record the most recently produced artifact for the liveness badge.
   useEffect(() => {
-    if (artifact) noteArtifact(artifact);
-  }, [artifact?.artifact_id, artifact?.version]);
+    if (artifact && sessionId) noteArtifact(sessionId, artifact);
+  }, [sessionId, artifact?.artifact_id, artifact?.version]);
 
   if (!artifact) return null;
   return (
     <div
       style={{
         padding: "8px 12px",
-        border: "1px solid var(--dsw-alias-border)",
+        border: "1px solid var(--dsw-alias-border-l3)",
         borderRadius: "8px",
       }}
     >
@@ -745,7 +948,7 @@ function ArtifactToolRow(props: any) {
         {openCanvas && (
           <button
             onClick={() => {
-              setSelected(artifact);
+              if (sessionId) setSelected(sessionId, artifact);
               openCanvas();
             }}
           >
@@ -802,6 +1005,7 @@ function apply(ctx: any) {
             "artifact.panel": { kind: "list", scope: "session" },
           },
           inject: (sessionId: string) => ({
+            sessionId,
             closeDetails: () => layout.closeDetails(),
             // Feed a selection back to the model as a queued user message.
             prompt: (text: string) => {

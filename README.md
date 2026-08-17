@@ -46,6 +46,11 @@ them live. You can:
 - **Extend it** — other plugins add renderers, toolbar buttons, and panels
   through child slots.
 - **Track liveness** — a badge marks the current artifact versus older versions.
+- **Switch versions** — a dropdown in the canvas header steps through every
+  version of an artifact.
+- **Keep sessions separate** — artifacts stay in their own conversation;
+  switching chats never leaks them.
+- **Go fullscreen** — expand the canvas to fill the viewport and back.
 - **Work in a wide layout** — the canvas opens at ~55% and resizes to ~70% of
   the viewport, Gemini-style.
 
@@ -56,6 +61,8 @@ them live. You can:
 | Cannot ask about a specific part | Drag-select any region and ask the model |
 | One-size-fits-all output | Extensible renderers, chrome, and panels |
 | No sense of what is current | A live badge marks the latest artifact |
+| No version history | Step through every version of an artifact |
+| Artifacts leak across sessions | Artifacts stay in their own conversation |
 
 ## Packages
 
@@ -195,8 +202,7 @@ arrive.
 
 ## Known limitations
 
-- One selected artifact at a time. There is no per-session keying yet.
-- Version history is in the log. There is no version switcher yet.
+- One selected artifact at a time.
 - HTML runs scripts in an opaque-origin sandbox. There is no CSP meta yet.
 - Localization is hardcoded English.
 - The built-in interaction loop handles `artifact:select` only. Other message

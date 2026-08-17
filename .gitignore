@@ -5,6 +5,9 @@ node_modules/
 probe-*.mjs
 verify-*.mjs
 
+# Private planning (not for public consumption)
+ROADMAP.md
+
 # OS
 .DS_Store
 Thumbs.db

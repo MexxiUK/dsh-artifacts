@@ -30,18 +30,33 @@ var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
 var name = "@dsh-artifact/client-ui-artifact";
 var inject = ["slots", "layout", "sessions"];
-var selected = null;
-var latest = null;
+var sessions = /* @__PURE__ */ new Map();
 var listeners = /* @__PURE__ */ new Set();
-function getSelected() {
-  return selected;
+var EMPTY_VERSIONS = [];
+function getState(sessionId) {
+  let s = sessions.get(sessionId);
+  if (!s) {
+    s = { selected: null, latest: null, history: /* @__PURE__ */ new Map() };
+    sessions.set(sessionId, s);
+  }
+  return s;
 }
-function setSelected(a) {
-  selected = a;
+function setSelected(sessionId, a) {
+  getState(sessionId).selected = a;
   for (const l of listeners) l();
 }
-function noteArtifact(a) {
-  latest = a;
+function noteArtifact(sessionId, a) {
+  const s = getState(sessionId);
+  s.latest = a;
+  if (a.version != null) {
+    const list = s.history.get(a.artifact_id) ?? [];
+    if (!list.some((x) => x.version === a.version)) {
+      s.history.set(
+        a.artifact_id,
+        [...list, a].sort((x, y) => (y.version ?? 0) - (x.version ?? 0))
+      );
+    }
+  }
   for (const l of listeners) l();
 }
 function subscribe(l) {
@@ -50,13 +65,27 @@ function subscribe(l) {
     listeners.delete(l);
   };
 }
-function useSelectedArtifact() {
-  return (0, import_react.useSyncExternalStore)(subscribe, getSelected, getSelected);
-}
-function useIsLive(artifact) {
+function useSelectedArtifact(sessionId) {
   return (0, import_react.useSyncExternalStore)(
     subscribe,
-    () => artifact != null && latest != null && artifact.artifact_id === latest.artifact_id && artifact.version === latest.version,
+    () => getState(sessionId).selected,
+    () => null
+  );
+}
+function useArtifactVersions(sessionId, artifactId) {
+  return (0, import_react.useSyncExternalStore)(
+    subscribe,
+    () => getState(sessionId).history.get(artifactId) ?? EMPTY_VERSIONS,
+    () => EMPTY_VERSIONS
+  );
+}
+function useIsLive(sessionId, artifact) {
+  return (0, import_react.useSyncExternalStore)(
+    subscribe,
+    () => {
+      const latest = getState(sessionId).latest;
+      return artifact != null && latest != null && artifact.artifact_id === latest.artifact_id && artifact.version === latest.version;
+    },
     () => false
   );
 }
@@ -140,8 +169,8 @@ function LivenessBadge({ live }) {
         fontWeight: 600,
         padding: "2px 8px",
         borderRadius: "999px",
-        color: live ? "var(--dsw-alias-success, #16a34a)" : "var(--dsw-alias-label-tertiary)",
-        background: live ? "var(--dsw-alias-success-soft, rgba(22,163,74,0.12))" : "var(--dsw-alias-bg-subtle, rgba(128,128,128,0.12))"
+        color: live ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-tertiary)",
+        background: live ? "var(--dsw-alias-state-success-tertiary)" : "var(--dsw-alias-interactive-bg-hover)"
       },
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -161,6 +190,109 @@ function LivenessBadge({ live }) {
       ]
     }
   );
+}
+function VersionSwitcher({
+  sessionId,
+  artifact
+}) {
+  const versions = useArtifactVersions(sessionId, artifact.artifact_id);
+  const [open, setOpen] = (0, import_react.useState)(false);
+  const ref = (0, import_react.useRef)(null);
+  (0, import_react.useEffect)(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  if (versions.length <= 1) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { opacity: 0.6 }, children: [
+      "v",
+      artifact.version
+    ] });
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref, style: { position: "relative" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "button",
+      {
+        onClick: () => setOpen((o) => !o),
+        title: "Switch version",
+        "aria-label": "Switch version",
+        "aria-haspopup": "listbox",
+        "aria-expanded": open,
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "2px",
+          padding: "2px 6px",
+          border: "1px solid var(--dsw-alias-border-l3)",
+          borderRadius: "6px",
+          background: "transparent",
+          cursor: "pointer",
+          fontSize: "12px",
+          color: "var(--dsw-alias-label-secondary)"
+        },
+        children: [
+          "v",
+          artifact.version,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+        ]
+      }
+    ),
+    open && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "div",
+      {
+        role: "listbox",
+        style: {
+          position: "absolute",
+          top: "calc(100% + 4px)",
+          left: 0,
+          zIndex: 20,
+          minWidth: "120px",
+          background: "var(--dsw-alias-bg-layer-3)",
+          border: "1px solid var(--dsw-alias-border-l3)",
+          borderRadius: "8px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+          padding: "4px"
+        },
+        children: versions.map((v) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "button",
+          {
+            role: "option",
+            "aria-selected": v.version === artifact.version,
+            onClick: () => {
+              setSelected(sessionId, v);
+              setOpen(false);
+            },
+            style: {
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "8px",
+              width: "100%",
+              padding: "4px 8px",
+              border: "none",
+              borderRadius: "4px",
+              background: v.version === artifact.version ? "var(--dsw-alias-interactive-bg-active)" : "transparent",
+              cursor: "pointer",
+              fontSize: "12px",
+              color: "var(--dsw-alias-label-primary)",
+              textAlign: "left"
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                "v",
+                v.version
+              ] }),
+              v.version === versions[0].version && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { opacity: 0.6, fontSize: "11px" }, children: "latest" })
+            ]
+          },
+          v.version
+        ))
+      }
+    )
+  ] });
 }
 function EyeIcon({ size = 16 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -201,6 +333,26 @@ function CursorIcon({ size = 16 }) {
     }
   );
 }
+function FullscreenExitIcon({ size = 16 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": true,
+      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "path",
+        {
+          d: "M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z",
+          fill: "currentColor"
+        }
+      )
+    }
+  );
+}
 var iconButtonStyle = {
   display: "inline-flex",
   alignItems: "center",
@@ -231,7 +383,7 @@ function ViewToggle({
       style: {
         position: "relative",
         display: "inline-flex",
-        background: "var(--dsw-alias-bg-subtle, rgba(128,128,128,0.12))",
+        background: "var(--dsw-alias-interactive-bg-hover)",
         borderRadius: "999px",
         padding: "2px"
       },
@@ -372,7 +524,7 @@ function SelectOverlay({
             width: Math.abs(drag.cx - drag.sx),
             height: Math.abs(drag.cy - drag.sy),
             border: "2px solid var(--dsw-alias-state-business-primary, #3b82f6)",
-            background: "rgba(59,130,246,0.12)",
+            background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
             pointerEvents: "none"
           }
         }
@@ -381,16 +533,31 @@ function SelectOverlay({
   );
 }
 function ArtifactCanvas(props) {
-  const artifact = useSelectedArtifact();
+  const sessionId = props.sessionId;
+  const artifact = useSelectedArtifact(sessionId);
   const [view, setView] = (0, import_react.useState)("preview");
   const renderSlot = props.renderSlot;
   const closeDetails = props.closeDetails;
   const prompt = props.prompt;
-  const isLive = useIsLive(artifact);
+  const isLive = useIsLive(sessionId, artifact);
   const [selectMode, setSelectMode] = (0, import_react.useState)(false);
   const [selection, setSelection] = (0, import_react.useState)(null);
   const [askText, setAskText] = (0, import_react.useState)("");
   const previewRef = (0, import_react.useRef)(null);
+  const rootRef = (0, import_react.useRef)(null);
+  const [isFullscreen, setIsFullscreen] = (0, import_react.useState)(false);
+  (0, import_react.useEffect)(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void rootRef.current?.requestFullscreen();
+    }
+  };
   const cancelSelect = () => {
     setSelectMode(false);
     setSelection(null);
@@ -425,156 +592,175 @@ function ArtifactCanvas(props) {
   if (!artifact) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { padding: "16px", color: "var(--dsw-alias-label-tertiary)" }, children: "No artifact selected. Create one with the artifact tool, or click \u201COpen in canvas\u201D on an artifact card." });
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", flexDirection: "column", height: "100%" }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-      "div",
-      {
-        style: {
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          padding: "8px 12px",
-          borderBottom: "1px solid var(--dsw-alias-border)"
-        },
-        children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontWeight: 600 }, children: artifact.title }),
-          artifact.version != null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { opacity: 0.6 }, children: [
-            "v",
-            artifact.version
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LivenessBadge, { live: isLive }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 } }),
-          renderSlot("artifact.chrome", { artifact }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ViewToggle, { view, onChange: setView }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              onClick: () => {
-                if (selectMode) cancelSelect();
-                else {
-                  setSelectMode(true);
-                  setSelection(null);
-                  setAskText("");
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "div",
+    {
+      ref: rootRef,
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "var(--dsw-alias-bg-base)"
+      },
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 12px",
+              borderBottom: "1px solid var(--dsw-alias-border-l3)"
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontWeight: 600 }, children: artifact.title }),
+              artifact.version != null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(VersionSwitcher, { sessionId, artifact }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LivenessBadge, { live: isLive }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 } }),
+              renderSlot("artifact.chrome", { artifact }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ViewToggle, { view, onChange: setView }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: () => {
+                    if (selectMode) cancelSelect();
+                    else {
+                      setSelectMode(true);
+                      setSelection(null);
+                      setAskText("");
+                    }
+                  },
+                  title: selectMode ? "Cancel" : "Select",
+                  "aria-label": selectMode ? "Cancel" : "Select",
+                  style: {
+                    ...iconButtonStyle,
+                    ...selectMode ? {
+                      background: "var(--dsw-alias-state-business-primary, #3b82f6)",
+                      color: "#fff"
+                    } : {}
+                  },
+                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CursorIcon, {})
                 }
-              },
-              title: selectMode ? "Cancel" : "Select",
-              "aria-label": selectMode ? "Cancel" : "Select",
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: () => navigator.clipboard.writeText(artifact.content),
+                  title: "Copy",
+                  "aria-label": "Copy",
+                  style: iconButtonStyle,
+                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: () => downloadArtifact(artifact),
+                  title: "Download",
+                  "aria-label": "Download",
+                  style: iconButtonStyle,
+                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: toggleFullscreen,
+                  title: isFullscreen ? "Exit fullscreen" : "Fullscreen",
+                  "aria-label": isFullscreen ? "Exit fullscreen" : "Fullscreen",
+                  style: iconButtonStyle,
+                  children: isFullscreen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FullscreenExitIcon, {}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconFullscreenOutline16, {})
+                }
+              ),
+              closeDetails && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: closeDetails,
+                  title: "Close",
+                  "aria-label": "Close",
+                  style: iconButtonStyle,
+                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCloseOutline16, {})
+                }
+              )
+            ]
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref: previewRef, style: { flex: 1, minHeight: 0, position: "relative" }, children: [
+          view === "preview" ? renderSlot("artifact.renderer", { artifact }, {
+            entryKey: artifact.type,
+            fallback: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RawFallback, { artifact })
+          }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeRenderer, { artifact }),
+          selectMode && view === "preview" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectOverlay, { onSelect: setSelection }),
+          selection && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "div",
+            {
               style: {
-                ...iconButtonStyle,
-                ...selectMode ? {
-                  background: "var(--dsw-alias-state-business-primary, #3b82f6)",
-                  color: "#fff"
-                } : {}
+                position: "absolute",
+                left: selection.x,
+                top: selection.y,
+                width: selection.w,
+                height: selection.h,
+                border: "2px solid var(--dsw-alias-state-business-primary, #3b82f6)",
+                background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
+                pointerEvents: "none",
+                zIndex: 10
+              }
+            }
+          ),
+          selection && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              style: {
+                position: "absolute",
+                left: selection.x,
+                top: Math.min(
+                  selection.y + selection.h + 8,
+                  (previewRef.current?.clientHeight ?? 0) - 56
+                ),
+                zIndex: 20,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "6px",
+                background: "var(--dsw-specific-input-major, #fff)",
+                border: "1px solid var(--dsw-alias-border-l3)",
+                borderRadius: "8px",
+                boxShadow: "var(--dsw-shadow-lv2)"
               },
-              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CursorIcon, {})
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              onClick: () => navigator.clipboard.writeText(artifact.content),
-              title: "Copy",
-              "aria-label": "Copy",
-              style: iconButtonStyle,
-              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              onClick: () => downloadArtifact(artifact),
-              title: "Download",
-              "aria-label": "Download",
-              style: iconButtonStyle,
-              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
-            }
-          ),
-          closeDetails && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              onClick: closeDetails,
-              title: "Close",
-              "aria-label": "Close",
-              style: iconButtonStyle,
-              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCloseOutline16, {})
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    autoFocus: true,
+                    value: askText,
+                    onChange: (e) => setAskText(e.target.value),
+                    onKeyDown: (e) => {
+                      if (e.key === "Enter") sendAsk();
+                      else if (e.key === "Escape") cancelSelect();
+                    },
+                    placeholder: "Ask about this, or describe an issue\u2026",
+                    style: {
+                      border: "none",
+                      outline: "none",
+                      background: "transparent",
+                      fontSize: "13px",
+                      minWidth: "220px",
+                      color: "var(--dsw-alias-label-primary)"
+                    }
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: sendAsk, disabled: !askText.trim(), children: "Send" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: cancelSelect, "aria-label": "Cancel selection", children: "\u2715" })
+              ]
             }
           )
-        ]
-      }
-    ),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref: previewRef, style: { flex: 1, minHeight: 0, position: "relative" }, children: [
-      view === "preview" ? renderSlot("artifact.renderer", { artifact }, {
-        entryKey: artifact.type,
-        fallback: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RawFallback, { artifact })
-      }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeRenderer, { artifact }),
-      selectMode && view === "preview" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectOverlay, { onSelect: setSelection }),
-      selection && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "div",
-        {
-          style: {
-            position: "absolute",
-            left: selection.x,
-            top: selection.y,
-            width: selection.w,
-            height: selection.h,
-            border: "2px solid var(--dsw-alias-state-business-primary, #3b82f6)",
-            background: "rgba(59,130,246,0.12)",
-            pointerEvents: "none",
-            zIndex: 10
-          }
-        }
-      ),
-      selection && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-        "div",
-        {
-          style: {
-            position: "absolute",
-            left: selection.x,
-            top: Math.min(
-              selection.y + selection.h + 8,
-              (previewRef.current?.clientHeight ?? 0) - 56
-            ),
-            zIndex: 20,
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "6px",
-            background: "var(--dsw-specific-input-major, #fff)",
-            border: "1px solid var(--dsw-alias-border)",
-            borderRadius: "8px",
-            boxShadow: "var(--dsw-shadow-lv2)"
-          },
-          children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                autoFocus: true,
-                value: askText,
-                onChange: (e) => setAskText(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.key === "Enter") sendAsk();
-                  else if (e.key === "Escape") cancelSelect();
-                },
-                placeholder: "Ask about this, or describe an issue\u2026",
-                style: {
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: "13px",
-                  minWidth: "220px",
-                  color: "var(--dsw-alias-label-primary)"
-                }
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: sendAsk, disabled: !askText.trim(), children: "Send" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: cancelSelect, "aria-label": "Cancel selection", children: "\u2715" })
-          ]
-        }
-      )
-    ] }),
-    renderSlot("artifact.panel", { artifact }),
-    renderSlot("artifact.interaction", { artifact })
-  ] });
+        ] }),
+        renderSlot("artifact.panel", { artifact }),
+        renderSlot("artifact.interaction", { artifact })
+      ]
+    }
+  );
 }
 var CODE_EXT = {
   javascript: "js",
@@ -610,16 +796,17 @@ function downloadArtifact(artifact) {
 function ArtifactToolRow(props) {
   const artifact = artifactFromBlock(props.block);
   const openCanvas = props.openCanvas;
+  const sessionId = props.sessionId;
   (0, import_react.useEffect)(() => {
-    if (artifact) noteArtifact(artifact);
-  }, [artifact?.artifact_id, artifact?.version]);
+    if (artifact && sessionId) noteArtifact(sessionId, artifact);
+  }, [sessionId, artifact?.artifact_id, artifact?.version]);
   if (!artifact) return null;
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
     "div",
     {
       style: {
         padding: "8px 12px",
-        border: "1px solid var(--dsw-alias-border)",
+        border: "1px solid var(--dsw-alias-border-l3)",
         borderRadius: "8px"
       },
       children: [
@@ -631,7 +818,7 @@ function ArtifactToolRow(props) {
             "button",
             {
               onClick: () => {
-                setSelected(artifact);
+                if (sessionId) setSelected(sessionId, artifact);
                 openCanvas();
               },
               children: "Open in canvas"
@@ -677,6 +864,7 @@ function apply(ctx) {
           "artifact.panel": { kind: "list", scope: "session" }
         },
         inject: (sessionId) => ({
+          sessionId,
           closeDetails: () => layout.closeDetails(),
           // Feed a selection back to the model as a queued user message.
           prompt: (text) => {
