@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Dev-only headless verification scripts (contain local machine paths)
+probe-*.mjs
+verify-*.mjs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
