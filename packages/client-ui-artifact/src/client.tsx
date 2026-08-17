@@ -19,7 +19,14 @@
 // the source/origin and feeds the selection back to the model as a queued user
 // message. Liveness: the canvas badges the selected artifact "Live" while it is
 // the most recently produced one, and "Older" otherwise.
-import { CodeBlock, MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
+import {
+  CodeBlock,
+  IconCloseOutline16,
+  IconCodeOutline16,
+  IconCopyOutline16,
+  IconDownloadOutline16,
+  MarkdownText,
+} from "@deepseek-ai/dsh-client-ui-primitives";
 import { useEffect, useRef, useSyncExternalStore, useState } from "react";
 
 const name = "@dsh-artifact/client-ui-artifact";
@@ -196,6 +203,58 @@ function LivenessBadge({ live }: { live: boolean }) {
   );
 }
 
+// ── inline icons (no primitives equivalent) ─────────────────────────────────
+
+function EyeIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path
+        d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="8" cy="8" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+
+function CursorIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" fill="currentColor" />
+    </svg>
+  );
+}
+
+const iconButtonStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "28px",
+  height: "28px",
+  padding: "0",
+  border: "none",
+  background: "transparent",
+  borderRadius: "6px",
+  cursor: "pointer",
+  color: "var(--dsw-alias-label-secondary)",
+};
+
 // ── view toggle (segmented control) ─────────────────────────────────────────
 
 function ViewToggle({
@@ -205,9 +264,13 @@ function ViewToggle({
   view: "preview" | "code";
   onChange: (view: "preview" | "code") => void;
 }) {
-  const options: Array<{ value: "preview" | "code"; label: string }> = [
-    { value: "preview", label: "Preview" },
-    { value: "code", label: "Code" },
+  const options: Array<{
+    value: "preview" | "code";
+    label: string;
+    icon: React.ReactNode;
+  }> = [
+    { value: "preview", label: "Preview", icon: <EyeIcon /> },
+    { value: "code", label: "Code", icon: <IconCodeOutline16 /> },
   ];
   const activeIndex = view === "code" ? 1 : 0;
   return (
@@ -242,17 +305,20 @@ function ViewToggle({
           key={opt.value}
           role="tab"
           aria-selected={view === opt.value}
+          aria-label={opt.label}
+          title={opt.label}
           onClick={() => onChange(view === "preview" ? "code" : "preview")}
           style={{
             position: "relative",
             zIndex: 1,
-            minWidth: "64px",
-            padding: "3px 10px",
+            minWidth: "32px",
+            padding: "4px 8px",
             border: "none",
             background: "transparent",
             cursor: "pointer",
-            fontSize: "12px",
-            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
             color:
               view === opt.value
                 ? "var(--dsw-alias-label-primary)"
@@ -260,7 +326,7 @@ function ViewToggle({
             transition: "color 0.2s ease",
           }}
         >
-          {opt.label}
+          {opt.icon}
         </button>
       ))}
     </div>
@@ -484,22 +550,46 @@ function ArtifactCanvas(props: any) {
               setAskText("");
             }
           }}
-          style={
-            selectMode
+          title={selectMode ? "Cancel" : "Select"}
+          aria-label={selectMode ? "Cancel" : "Select"}
+          style={{
+            ...iconButtonStyle,
+            ...(selectMode
               ? {
                   background: "var(--dsw-alias-state-business-primary, #3b82f6)",
                   color: "#fff",
                 }
-              : undefined
-          }
+              : {}),
+          }}
         >
-          {selectMode ? "Cancel" : "Select"}
+          <CursorIcon />
         </button>
-        <button onClick={() => navigator.clipboard.writeText(artifact.content)}>
-          Copy
+        <button
+          onClick={() => navigator.clipboard.writeText(artifact.content)}
+          title="Copy"
+          aria-label="Copy"
+          style={iconButtonStyle}
+        >
+          <IconCopyOutline16 />
         </button>
-        <button onClick={() => downloadArtifact(artifact)}>Download</button>
-        {closeDetails && <button onClick={closeDetails}>Close</button>}
+        <button
+          onClick={() => downloadArtifact(artifact)}
+          title="Download"
+          aria-label="Download"
+          style={iconButtonStyle}
+        >
+          <IconDownloadOutline16 />
+        </button>
+        {closeDetails && (
+          <button
+            onClick={closeDetails}
+            title="Close"
+            aria-label="Close"
+            style={iconButtonStyle}
+          >
+            <IconCloseOutline16 />
+          </button>
+        )}
       </div>
       <div ref={previewRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {view === "preview" ? (

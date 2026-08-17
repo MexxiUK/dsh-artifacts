@@ -162,13 +162,65 @@ function LivenessBadge({ live }) {
     }
   );
 }
+function EyeIcon({ size = 16 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 16 16",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": true,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "path",
+          {
+            d: "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z",
+            stroke: "currentColor",
+            strokeWidth: "1.5",
+            strokeLinejoin: "round"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "8", cy: "8", r: "2", fill: "currentColor" })
+      ]
+    }
+  );
+}
+function CursorIcon({ size = 16 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": true,
+      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z", fill: "currentColor" })
+    }
+  );
+}
+var iconButtonStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "28px",
+  height: "28px",
+  padding: "0",
+  border: "none",
+  background: "transparent",
+  borderRadius: "6px",
+  cursor: "pointer",
+  color: "var(--dsw-alias-label-secondary)"
+};
 function ViewToggle({
   view,
   onChange
 }) {
   const options = [
-    { value: "preview", label: "Preview" },
-    { value: "code", label: "Code" }
+    { value: "preview", label: "Preview", icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EyeIcon, {}) },
+    { value: "code", label: "Code", icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCodeOutline16, {}) }
   ];
   const activeIndex = view === "code" ? 1 : 0;
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -207,21 +259,24 @@ function ViewToggle({
           {
             role: "tab",
             "aria-selected": view === opt.value,
+            "aria-label": opt.label,
+            title: opt.label,
             onClick: () => onChange(view === "preview" ? "code" : "preview"),
             style: {
               position: "relative",
               zIndex: 1,
-              minWidth: "64px",
-              padding: "3px 10px",
+              minWidth: "32px",
+              padding: "4px 8px",
               border: "none",
               background: "transparent",
               cursor: "pointer",
-              fontSize: "12px",
-              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
               color: view === opt.value ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-label-secondary)",
               transition: "color 0.2s ease"
             },
-            children: opt.label
+            children: opt.icon
           },
           opt.value
         ))
@@ -402,16 +457,48 @@ function ArtifactCanvas(props) {
                   setAskText("");
                 }
               },
-              style: selectMode ? {
-                background: "var(--dsw-alias-state-business-primary, #3b82f6)",
-                color: "#fff"
-              } : void 0,
-              children: selectMode ? "Cancel" : "Select"
+              title: selectMode ? "Cancel" : "Select",
+              "aria-label": selectMode ? "Cancel" : "Select",
+              style: {
+                ...iconButtonStyle,
+                ...selectMode ? {
+                  background: "var(--dsw-alias-state-business-primary, #3b82f6)",
+                  color: "#fff"
+                } : {}
+              },
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CursorIcon, {})
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => navigator.clipboard.writeText(artifact.content), children: "Copy" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => downloadArtifact(artifact), children: "Download" }),
-          closeDetails && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: closeDetails, children: "Close" })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              onClick: () => navigator.clipboard.writeText(artifact.content),
+              title: "Copy",
+              "aria-label": "Copy",
+              style: iconButtonStyle,
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              onClick: () => downloadArtifact(artifact),
+              title: "Download",
+              "aria-label": "Download",
+              style: iconButtonStyle,
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
+            }
+          ),
+          closeDetails && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              onClick: closeDetails,
+              title: "Close",
+              "aria-label": "Close",
+              style: iconButtonStyle,
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCloseOutline16, {})
+            }
+          )
         ]
       }
     ),
