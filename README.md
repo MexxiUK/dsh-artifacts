@@ -3,11 +3,25 @@
 **Render HTML, Markdown, and code in a side panel — with syntax highlighting, select-and-ask, and an extensible plugin API.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4f46e5.svg)](https://github.com/deepseek-ai/deepseek-harness)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 The Artifact Canvas brings Claude- and Gemini-style artifacts to
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). When the
 model builds a web page, a document, or a code file, the canvas renders it in a
 dedicated side panel instead of dumping raw text into the chat.
+
+## Contents
+
+- [The problem](#the-problem)
+- [What this plugin solves](#what-this-plugin-solves)
+- [Packages](#packages)
+- [How it works](#how-it-works)
+- [Select and ask](#select-and-ask)
+- [Extensibility](#extensibility-child-slots)
+- [Installation](#installation)
+- [Build](#build)
+- [Known limitations](#known-limitations)
 
 ## The problem
 
@@ -32,6 +46,14 @@ them live. You can:
 - **Work in a wide layout** — the canvas opens at ~55% and resizes to ~70% of
   the viewport, Gemini-style.
 
+| Without the canvas | With the canvas |
+|---|---|
+| HTML, Markdown, and code appear as raw text in the chat | Rendered in a dedicated side panel |
+| No syntax highlighting | shiki syntax highlighting for every language |
+| Cannot ask about a specific part | Drag-select any region and ask the model |
+| One-size-fits-all output | Extensible renderers, chrome, and panels |
+| No sense of what is current | A live badge marks the latest artifact |
+
 ## Packages
 
 | Package | Plane | Role |
@@ -53,6 +75,16 @@ them live. You can:
 5. A **Preview / Code** toggle switches between the rendered view and the raw
    source. The Code view shows syntax highlighting. The highlighting uses the
    artifact `language`.
+
+```mermaid
+flowchart LR
+  Model[Model] -->|artifact tool| Tool[artifact tool]
+  Tool -->|presentationMeta| Meta[tool result meta]
+  Meta --> Card[inline card]
+  Card -->|Open in canvas| Canvas[canvas]
+  Canvas -->|renders| Out[HTML / Markdown / code]
+  Canvas -->|select-and-ask| Model
+```
 
 ## Select and ask
 
