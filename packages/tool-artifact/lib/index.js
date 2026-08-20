@@ -8,6 +8,9 @@
 // session log alone.
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const name = "tool-artifact";
 
@@ -23,6 +26,42 @@ function slugify(title) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
   return s || "artifact";
+}
+
+/** Path to the durable version-counter file under the DSH home. */
+function versionsFile() {
+  const home = process.env.DSH_HOME || join(homedir(), ".dsh");
+  return join(home, "artifact-versions.json");
+}
+
+/** Load the version counter, tolerating a missing or corrupt file. */
+function loadVersions() {
+  try {
+    const raw = readFileSync(versionsFile(), "utf8");
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      const map = new Map();
+      for (const [id, v] of Object.entries(obj)) {
+        if (typeof v === "number" && Number.isFinite(v)) map.set(id, v);
+      }
+      return map;
+    }
+  } catch {
+    // Missing or unreadable — start fresh.
+  }
+  return new Map();
+}
+
+/** Persist the version counter (best-effort). */
+function saveVersions(versions) {
+  try {
+    writeFileSync(
+      versionsFile(),
+      JSON.stringify(Object.fromEntries(versions), null, 2),
+    );
+  } catch {
+    // A failed write only means the counter resets on restart.
+  }
 }
 
 function apply(ctx) {
@@ -41,10 +80,11 @@ function apply(ctx) {
     ].join(" "),
   });
 
-  // Per-process version counter keyed by artifact_id. The durable tool results
-  // still record every version, so the client reconstructs history from the log;
-  // this map only decides the next version number for a live `update`.
-  const versions = new Map();
+  // Version counter keyed by artifact_id, persisted to disk so `update` still
+  // works after a restart. The durable tool results also record every version,
+  // so the client reconstructs history from the log; this map only decides the
+  // next version number for a live `update`.
+  const versions = loadVersions();
 
   ctx.tools.register(
     defineTool({
@@ -119,6 +159,7 @@ function apply(ctx) {
         if (args.action === "create") {
           const id = `${slugify(args.title)}-${randomUUID().slice(0, 8)}`;
           versions.set(id, 1);
+          saveVersions(versions);
           return {
             artifact_id: id,
             title: args.title,
@@ -139,6 +180,7 @@ function apply(ctx) {
         }
         const next = current + 1;
         versions.set(args.artifact_id, next);
+        saveVersions(versions);
         return {
           artifact_id: args.artifact_id,
           title: args.title,

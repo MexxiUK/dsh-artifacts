@@ -60,6 +60,12 @@ them live. You can:
 - **Keep sessions separate** — artifacts stay in their own conversation;
   switching chats never leaks them.
 - **Go fullscreen** — expand the canvas to fill the viewport and back.
+- **Find in artifact** — Cmd/Ctrl+F searches the source and highlights matches.
+- **Copy what you see** — copy the rendered text (Markdown/HTML) or the raw
+  source.
+- **Download every version** — grab one version or all of them at once.
+- **Use keyboard shortcuts** — Esc closes, Cmd/Ctrl+Enter sends a question,
+  Cmd/Ctrl+F finds.
 - **Work in a wide layout** — the canvas opens at ~55% and resizes to ~70% of
   the viewport.
 
@@ -71,6 +77,7 @@ them live. You can:
 | One-size-fits-all output | Extensible renderers, chrome, and panels |
 | No sense of what is current | A live badge marks the latest artifact |
 | No version history | Step through every version of an artifact |
+| No way to find text in an artifact | Cmd/Ctrl+F searches and highlights matches |
 | Artifacts leak across sessions | Artifacts stay in their own conversation |
 
 ## Packages
@@ -112,7 +119,8 @@ flowchart LR
 A floating action stack in the lower-right of the canvas has a **Select**
 button. Click the button to enter select mode. A crosshair overlay covers the
 preview. Drag to draw a rectangle. Release to show a popup. Type a question or
-describe an issue. Press Enter or click **Send**.
+describe an issue. Press Enter or click **Send** — or Cmd/Ctrl+Enter from
+anywhere in the canvas.
 
 The canvas extracts the text under the selection. For Markdown and code, it
 extracts the text. For HTML, it reports the region geometry. The iframe is
@@ -151,7 +159,7 @@ user message.
 
 HTML and options artifacts get a small error-capture script injected into their
 source. It reports JavaScript errors, unhandled promise rejections,
-`console.error` calls, and failed resource loads back to the canvas. A terminal
+`console.error` calls, and failed resource loads back to the canvas. A console
 button in the floating action stack opens a console panel that lists them.
 
 A magic-wand button in the same stack asks the model to fix the artifact. With
@@ -228,7 +236,8 @@ arrive.
 ## Known limitations
 
 - One selected artifact at a time.
-- HTML runs scripts in an opaque-origin sandbox. There is no CSP meta yet.
+- HTML runs scripts in an opaque-origin sandbox with a restrictive CSP that
+  blocks network access (remote scripts, styles, images, and fetch/XHR).
 - Localization is hardcoded English.
 - The built-in interaction loop handles `artifact:select` only. Other message
   types use the `artifact.interaction` slot. The canvas cannot send messages
@@ -236,6 +245,3 @@ arrive.
 - The wide-details layout is generated at install time by patching the installed
   `dsh-client-ui-layout`. If DSH changes the patched code, the installer falls
   back to the frozen copy shipped in this repo.
-- Version numbers are tracked in memory by the `artifact` tool. After a DeepSeek
-  Harness restart, updating an artifact created before the restart fails with
-  "unknown artifact_id" — create a fresh artifact instead.

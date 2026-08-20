@@ -153,6 +153,15 @@ function injectFillCss(html) {
   }
   return FILL_CSS + html;
 }
+var CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">`;
+function injectCsp(html) {
+  const m = /<head[^>]*>/i.exec(html);
+  if (m) {
+    const end = m.index + m[0].length;
+    return html.slice(0, end) + CSP_META + html.slice(end);
+  }
+  return CSP_META + html;
+}
 var iframeWindows = /* @__PURE__ */ new Set();
 function useTrackIframe() {
   const prev = (0, import_react.useRef)(null);
@@ -177,7 +186,7 @@ function HtmlRenderer({ artifact }) {
     {
       ref,
       sandbox: "allow-scripts",
-      srcDoc: injectErrorCapture(artifact.content),
+      srcDoc: injectCsp(injectErrorCapture(artifact.content)),
       title: artifact.title,
       style: {
         width: "100%",
@@ -191,7 +200,67 @@ function HtmlRenderer({ artifact }) {
 function MarkdownRenderer({ artifact }) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { padding: "16px", overflow: "auto", height: "100%" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.MarkdownText, { text: artifact.content }) });
 }
-function CodeRenderer({ artifact }) {
+function findMatches(text, query) {
+  if (!query) return [];
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  const matches = [];
+  let i = 0;
+  while ((i = lower.indexOf(q, i)) !== -1) {
+    matches.push(i);
+    i += q.length;
+  }
+  return matches;
+}
+function CodeRenderer({
+  artifact,
+  search
+}) {
+  const containerRef = (0, import_react.useRef)(null);
+  (0, import_react.useEffect)(() => {
+    if (!search || !search.query) return;
+    const el = containerRef.current?.querySelector("mark[data-current='true']");
+    el?.scrollIntoView({ block: "center" });
+  }, [search?.currentIndex, search?.query]);
+  if (search && search.query && search.matches.length > 0) {
+    const parts = [];
+    let last = 0;
+    search.matches.forEach((m, i) => {
+      parts.push(artifact.content.slice(last, m));
+      parts.push(
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "mark",
+          {
+            "data-current": i === search.currentIndex ? "true" : void 0,
+            style: {
+              background: i === search.currentIndex ? "var(--dsw-alias-state-warn-primary)" : "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent)",
+              color: "inherit",
+              borderRadius: "2px"
+            },
+            children: artifact.content.slice(m, m + search.query.length)
+          },
+          i
+        )
+      );
+      last = m + search.query.length;
+    });
+    parts.push(artifact.content.slice(last));
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { ref: containerRef, style: { overflow: "auto", height: "100%" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "pre",
+      {
+        style: {
+          margin: 0,
+          padding: "16px",
+          fontFamily: "monospace",
+          fontSize: "13px",
+          lineHeight: "1.5",
+          whiteSpace: "pre",
+          color: "var(--dsw-alias-label-primary)"
+        },
+        children: parts
+      }
+    ) });
+  }
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { overflow: "auto", height: "100%" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
     import_dsh_client_ui_primitives.CodeBlock,
     {
@@ -261,7 +330,7 @@ function OptionsRenderer({ artifact }) {
     {
       ref,
       sandbox: "allow-scripts",
-      srcDoc: injectErrorCapture(injectFillCss(visual)),
+      srcDoc: injectCsp(injectErrorCapture(injectFillCss(visual))),
       title: artifact.title,
       style: { width: "100%", height: "100%", border: "none", background: "#fff" }
     }
@@ -749,8 +818,16 @@ function ArtifactCanvas(props) {
   const [isFullscreen, setIsFullscreen] = (0, import_react.useState)(false);
   const [errors, setErrors] = (0, import_react.useState)([]);
   const [consoleOpen, setConsoleOpen] = (0, import_react.useState)(false);
+  const [searchOpen, setSearchOpen] = (0, import_react.useState)(false);
+  const [searchQuery, setSearchQuery] = (0, import_react.useState)("");
+  const [searchIndex, setSearchIndex] = (0, import_react.useState)(0);
   (0, import_react.useEffect)(() => {
     setErrors([]);
+  }, [artifact?.artifact_id, artifact?.version]);
+  (0, import_react.useEffect)(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchIndex(0);
   }, [artifact?.artifact_id, artifact?.version]);
   (0, import_react.useEffect)(() => {
     const onChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -799,6 +876,57 @@ function ArtifactCanvas(props) {
       );
     }
   };
+  const searchMatches = searchQuery ? findMatches(artifact?.content ?? "", searchQuery) : [];
+  const openSearch = () => {
+    setView("code");
+    setSearchOpen(true);
+  };
+  const stepSearch = (dir) => {
+    if (searchMatches.length === 0) return;
+    setSearchIndex((i) => (i + dir + searchMatches.length) % searchMatches.length);
+  };
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchIndex(0);
+  };
+  const keydownStateRef = (0, import_react.useRef)({
+    selectMode,
+    selection,
+    sendAsk,
+    cancelSelect,
+    closeDetails,
+    openSearch
+  });
+  keydownStateRef.current = {
+    selectMode,
+    selection,
+    sendAsk,
+    cancelSelect,
+    closeDetails,
+    openSearch
+  };
+  (0, import_react.useEffect)(() => {
+    const onKeyDown = (e) => {
+      const s = keydownStateRef.current;
+      if (e.key === "Escape") {
+        if (document.fullscreenElement) return;
+        if (s.selectMode || s.selection) {
+          s.cancelSelect();
+        } else {
+          s.closeDetails?.();
+        }
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        s.sendAsk();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        s.openSearch();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   (0, import_react.useEffect)(() => {
     if (!artifact || artifact.type !== "html" || !prompt) return;
     const onMessage = (event) => {
@@ -869,6 +997,92 @@ function ArtifactCanvas(props) {
             ]
           }
         ),
+        searchOpen && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "6px 12px",
+              borderBottom: "1px solid var(--dsw-alias-border-l3)"
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  autoFocus: true,
+                  value: searchQuery,
+                  onChange: (e) => {
+                    setSearchQuery(e.target.value);
+                    setSearchIndex(0);
+                  },
+                  onKeyDown: (e) => {
+                    if (e.key === "Escape") {
+                      e.stopPropagation();
+                      closeSearch();
+                    } else if (e.key === "Enter") {
+                      e.stopPropagation();
+                      stepSearch(e.shiftKey ? -1 : 1);
+                    }
+                  },
+                  placeholder: "Find in artifact",
+                  style: {
+                    flex: 1,
+                    padding: "4px 8px",
+                    border: "1px solid var(--dsw-alias-border-l3)",
+                    borderRadius: "6px",
+                    background: "var(--dsw-alias-bg-layer-2)",
+                    color: "var(--dsw-alias-label-primary)",
+                    fontSize: "13px"
+                  }
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "span",
+                {
+                  style: {
+                    fontSize: "12px",
+                    color: "var(--dsw-alias-label-secondary)",
+                    minWidth: "64px",
+                    textAlign: "center"
+                  },
+                  children: searchQuery ? searchMatches.length ? `${searchIndex + 1} of ${searchMatches.length}` : "No matches" : ""
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: () => stepSearch(-1),
+                  title: "Previous match",
+                  "aria-label": "Previous match",
+                  style: { ...iconButtonStyle, fontSize: "14px" },
+                  children: "\u2191"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: () => stepSearch(1),
+                  title: "Next match",
+                  "aria-label": "Next match",
+                  style: { ...iconButtonStyle, fontSize: "14px" },
+                  children: "\u2193"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  onClick: closeSearch,
+                  title: "Close search",
+                  "aria-label": "Close search",
+                  style: iconButtonStyle,
+                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCloseOutline16, {})
+                }
+              )
+            ]
+          }
+        ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref: previewRef, style: { flex: 1, minHeight: 0, position: "relative" }, children: [
           view === "preview" ? renderSlot(
             "artifact.renderer",
@@ -877,7 +1091,13 @@ function ArtifactCanvas(props) {
               entryKey: artifact.type,
               fallback: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RawFallback, { artifact })
             }
-          ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeRenderer, { artifact }),
+          ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            CodeRenderer,
+            {
+              artifact,
+              search: searchOpen && searchQuery ? { query: searchQuery, matches: searchMatches, currentIndex: searchIndex } : void 0
+            }
+          ),
           selectMode && view === "preview" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectOverlay, { onSelect: setSelection }),
           selection && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "div",
@@ -993,24 +1213,16 @@ function ArtifactCanvas(props) {
                     children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MagicWandIcon, {})
                   }
                 ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CopyButton, { artifact, style: iconButtonStyle }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DownloadButton, { sessionId, artifact, style: iconButtonStyle }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
-                    onClick: () => navigator.clipboard.writeText(artifact.content),
-                    title: "Copy",
-                    "aria-label": "Copy",
+                    onClick: openSearch,
+                    title: "Find in artifact",
+                    "aria-label": "Find in artifact",
                     style: iconButtonStyle,
-                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "button",
-                  {
-                    onClick: () => downloadArtifact(artifact),
-                    title: "Download",
-                    "aria-label": "Download",
-                    style: iconButtonStyle,
-                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconSearchOutline16, {})
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { position: "relative" }, children: [
@@ -1168,9 +1380,161 @@ function downloadArtifact(artifact) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${artifact.artifact_id}.${ext}`;
+  const versionSuffix = artifact.version != null ? `-v${artifact.version}` : "";
+  a.download = `${artifact.artifact_id}${versionSuffix}.${ext}`;
   a.click();
   URL.revokeObjectURL(url);
+}
+function htmlToText(html) {
+  const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html);
+  const div = document.createElement("div");
+  div.innerHTML = body ? body[1] : html;
+  return (div.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+function renderedText(artifact) {
+  if (artifact.type === "markdown") return (0, import_dsh_client_ui_primitives.extractMarkdownPlainText)(artifact.content);
+  if (artifact.type === "html") return htmlToText(artifact.content);
+  return null;
+}
+var menuItemStyle = {
+  display: "block",
+  width: "100%",
+  padding: "4px 8px",
+  border: "none",
+  borderRadius: "4px",
+  background: "transparent",
+  cursor: "pointer",
+  fontSize: "12px",
+  color: "var(--dsw-alias-label-primary)",
+  textAlign: "left"
+};
+var menuStyle = {
+  position: "absolute",
+  right: "calc(100% + 4px)",
+  top: "50%",
+  transform: "translateY(-50%)",
+  zIndex: 30,
+  minWidth: "140px",
+  background: "var(--dsw-alias-bg-layer-3)",
+  border: "1px solid var(--dsw-alias-border-l3)",
+  borderRadius: "8px",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+  padding: "4px"
+};
+function CopyButton({
+  artifact,
+  style
+}) {
+  const rendered = renderedText(artifact);
+  const [open, setOpen] = (0, import_react.useState)(false);
+  const ref = (0, import_react.useRef)(null);
+  (0, import_react.useEffect)(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const doCopy = (text) => {
+    void (0, import_dsh_client_ui_primitives.writeClipboard)(text);
+    setOpen(false);
+  };
+  if (rendered === null) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        onClick: () => doCopy(artifact.content),
+        title: "Copy",
+        "aria-label": "Copy",
+        style,
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
+      }
+    );
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref, style: { position: "relative" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        onClick: () => setOpen((o) => !o),
+        title: "Copy",
+        "aria-label": "Copy",
+        "aria-haspopup": "menu",
+        "aria-expanded": open,
+        style,
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
+      }
+    ),
+    open && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { role: "menu", style: menuStyle, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { role: "menuitem", onClick: () => doCopy(artifact.content), style: menuItemStyle, children: "Copy source" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { role: "menuitem", onClick: () => doCopy(rendered), style: menuItemStyle, children: "Copy rendered" })
+    ] })
+  ] });
+}
+function DownloadButton({
+  sessionId,
+  artifact,
+  style
+}) {
+  const versions = useArtifactVersions(sessionId, artifact.artifact_id);
+  const [open, setOpen] = (0, import_react.useState)(false);
+  const ref = (0, import_react.useRef)(null);
+  (0, import_react.useEffect)(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const downloadAll = () => {
+    const ordered = [...versions].sort((a, b) => (a.version ?? 0) - (b.version ?? 0));
+    ordered.forEach((v, i) => {
+      setTimeout(() => downloadArtifact(v), i * 300);
+    });
+    setOpen(false);
+  };
+  if (versions.length <= 1) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        onClick: () => downloadArtifact(artifact),
+        title: "Download",
+        "aria-label": "Download",
+        style,
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
+      }
+    );
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref, style: { position: "relative" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        onClick: () => setOpen((o) => !o),
+        title: "Download",
+        "aria-label": "Download",
+        "aria-haspopup": "menu",
+        "aria-expanded": open,
+        style,
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
+      }
+    ),
+    open && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { role: "menu", style: menuStyle, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          role: "menuitem",
+          onClick: () => {
+            downloadArtifact(artifact);
+            setOpen(false);
+          },
+          style: menuItemStyle,
+          children: "Download current"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { role: "menuitem", onClick: downloadAll, style: menuItemStyle, children: "Download all versions" })
+    ] })
+  ] });
 }
 var TYPE_LABELS = {
   html: "HTML",

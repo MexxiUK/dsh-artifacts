@@ -1,7 +1,7 @@
 {
   "name": "@dsh-artifact/tool-artifact",
   "description": "Model-facing `artifact` tool: create and update HTML, Markdown, SVG, code, and interactive options artifacts for the canvas.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

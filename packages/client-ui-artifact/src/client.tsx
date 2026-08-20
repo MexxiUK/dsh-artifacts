@@ -21,13 +21,16 @@
 // the most recently produced one, and "Older" otherwise.
 import {
   CodeBlock,
+  extractMarkdownPlainText,
   IconChevronDownOutline14,
   IconCloseOutline16,
   IconCodeOutline16,
   IconCopyOutline16,
   IconDownloadOutline16,
   IconFullscreenOutline16,
+  IconSearchOutline16,
   MarkdownText,
+  writeClipboard,
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useCallback, useEffect, useRef, useSyncExternalStore, useState } from "react";
 
@@ -220,6 +223,24 @@ function injectFillCss(html: string): string {
   return FILL_CSS + html;
 }
 
+// Injected into HTML and options artifacts to block network access. The
+// sandbox already isolates the iframe, but a CSP closes the remaining hole:
+// without it an artifact could still fetch remote resources or exfiltrate data.
+// Inline scripts/styles and data-URI images stay allowed so artifacts keep
+// working; everything else (remote scripts, styles, images, fetch/XHR) is off.
+const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">`;
+
+function injectCsp(html: string): string {
+  // Inject right after the opening <head> so the policy covers the whole
+  // document, including any resources the artifact references in its head.
+  const m = /<head[^>]*>/i.exec(html);
+  if (m) {
+    const end = m.index + m[0].length;
+    return html.slice(0, end) + CSP_META + html.slice(end);
+  }
+  return CSP_META + html;
+}
+
 // The contentWindows of the mounted artifact iframes (HTML and options visual).
 // The canvas validates postMessage `event.source` against this set so only our
 // own iframes can feed selections/errors back — not any other opaque-origin
@@ -251,7 +272,7 @@ function HtmlRenderer({ artifact }: { artifact: Artifact }) {
     <iframe
       ref={ref}
       sandbox="allow-scripts"
-      srcDoc={injectErrorCapture(artifact.content)}
+      srcDoc={injectCsp(injectErrorCapture(artifact.content))}
       title={artifact.title}
       style={{
         width: "100%",
@@ -271,7 +292,87 @@ function MarkdownRenderer({ artifact }: { artifact: Artifact }) {
   );
 }
 
-function CodeRenderer({ artifact }: { artifact: Artifact }) {
+/** Start indices of every case-insensitive match of `query` in `text`. */
+function findMatches(text: string, query: string): number[] {
+  if (!query) return [];
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  const matches: number[] = [];
+  let i = 0;
+  while ((i = lower.indexOf(q, i)) !== -1) {
+    matches.push(i);
+    i += q.length;
+  }
+  return matches;
+}
+
+/** Search state passed to the code renderer to highlight matches. */
+type CodeSearch = {
+  query: string;
+  matches: number[];
+  currentIndex: number;
+};
+
+function CodeRenderer({
+  artifact,
+  search,
+}: {
+  artifact: Artifact;
+  search?: CodeSearch;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the current match into view when the user steps through results.
+  useEffect(() => {
+    if (!search || !search.query) return;
+    const el = containerRef.current?.querySelector("mark[data-current='true']");
+    el?.scrollIntoView({ block: "center" });
+  }, [search?.currentIndex, search?.query]);
+
+  if (search && search.query && search.matches.length > 0) {
+    const parts: React.ReactNode[] = [];
+    let last = 0;
+    search.matches.forEach((m, i) => {
+      parts.push(artifact.content.slice(last, m));
+      parts.push(
+        <mark
+          key={i}
+          data-current={i === search.currentIndex ? "true" : undefined}
+          style={{
+            background:
+              i === search.currentIndex
+                ? "var(--dsw-alias-state-warn-primary)"
+                : "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent)",
+            color: "inherit",
+            borderRadius: "2px",
+          }}
+        >
+          {artifact.content.slice(m, m + search.query.length)}
+        </mark>,
+      );
+      last = m + search.query.length;
+    });
+    parts.push(artifact.content.slice(last));
+
+    return (
+      <div ref={containerRef} style={{ overflow: "auto", height: "100%" }}>
+        <pre
+          style={{
+            margin: 0,
+            padding: "16px",
+            fontFamily: "monospace",
+            fontSize: "13px",
+            lineHeight: "1.5",
+            whiteSpace: "pre",
+            color: "var(--dsw-alias-label-primary)",
+          }}
+        >
+          {parts}
+        </pre>
+      </div>
+    );
+  }
+
   return (
     <div style={{ overflow: "auto", height: "100%" }}>
       <CodeBlock
@@ -354,7 +455,7 @@ function OptionsRenderer({ artifact }: { artifact: Artifact }) {
         <iframe
           ref={ref}
           sandbox="allow-scripts"
-          srcDoc={injectErrorCapture(injectFillCss(visual))}
+          srcDoc={injectCsp(injectErrorCapture(injectFillCss(visual)))}
           title={artifact.title}
           style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
         />
@@ -883,10 +984,21 @@ function ArtifactCanvas(props: any) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [errors, setErrors] = useState<ArtifactError[]>([]);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
 
   // Clear captured errors whenever the rendered artifact (or its version) changes.
   useEffect(() => {
     setErrors([]);
+  }, [artifact?.artifact_id, artifact?.version]);
+
+  // Reset find-in-artifact when the artifact (or its version) changes, so a
+  // stale query/index never points into different content.
+  useEffect(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchIndex(0);
   }, [artifact?.artifact_id, artifact?.version]);
 
   // Track native fullscreen state so the button can flip between expand/contract.
@@ -941,6 +1053,63 @@ function ArtifactCanvas(props: any) {
       );
     }
   };
+
+  // ── find-in-artifact search ──────────────────────────────────────────────
+  const searchMatches = searchQuery ? findMatches(artifact?.content ?? "", searchQuery) : [];
+  const openSearch = () => {
+    setView("code");
+    setSearchOpen(true);
+  };
+  const stepSearch = (dir: 1 | -1) => {
+    if (searchMatches.length === 0) return;
+    setSearchIndex((i) => (i + dir + searchMatches.length) % searchMatches.length);
+  };
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchIndex(0);
+  };
+
+  // Keyboard shortcuts: Esc cancels the selection (or closes the canvas when
+  // there is none), Cmd/Ctrl+Enter sends the select-and-ask question, and
+  // Cmd/Ctrl+F opens find-in-artifact.
+  const keydownStateRef = useRef({
+    selectMode,
+    selection,
+    sendAsk,
+    cancelSelect,
+    closeDetails,
+    openSearch,
+  });
+  keydownStateRef.current = {
+    selectMode,
+    selection,
+    sendAsk,
+    cancelSelect,
+    closeDetails,
+    openSearch,
+  };
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const s = keydownStateRef.current;
+      if (e.key === "Escape") {
+        if (document.fullscreenElement) return; // let the browser exit fullscreen
+        if (s.selectMode || s.selection) {
+          s.cancelSelect();
+        } else {
+          s.closeDetails?.();
+        }
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        s.sendAsk();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        s.openSearch();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Interaction loop: listen for postMessage from the sandboxed iframe. Only
   // accept messages whose source is the iframe we rendered and whose origin is
@@ -1029,6 +1198,83 @@ function ArtifactCanvas(props: any) {
           </button>
         )}
       </div>
+      {searchOpen && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "6px 12px",
+            borderBottom: "1px solid var(--dsw-alias-border-l3)",
+          }}
+        >
+          <input
+            autoFocus
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setSearchIndex(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                closeSearch();
+              } else if (e.key === "Enter") {
+                e.stopPropagation();
+                stepSearch(e.shiftKey ? -1 : 1);
+              }
+            }}
+            placeholder="Find in artifact"
+            style={{
+              flex: 1,
+              padding: "4px 8px",
+              border: "1px solid var(--dsw-alias-border-l3)",
+              borderRadius: "6px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              color: "var(--dsw-alias-label-primary)",
+              fontSize: "13px",
+            }}
+          />
+          <span
+            style={{
+              fontSize: "12px",
+              color: "var(--dsw-alias-label-secondary)",
+              minWidth: "64px",
+              textAlign: "center",
+            }}
+          >
+            {searchQuery
+              ? searchMatches.length
+                ? `${searchIndex + 1} of ${searchMatches.length}`
+                : "No matches"
+              : ""}
+          </span>
+          <button
+            onClick={() => stepSearch(-1)}
+            title="Previous match"
+            aria-label="Previous match"
+            style={{ ...iconButtonStyle, fontSize: "14px" }}
+          >
+            ↑
+          </button>
+          <button
+            onClick={() => stepSearch(1)}
+            title="Next match"
+            aria-label="Next match"
+            style={{ ...iconButtonStyle, fontSize: "14px" }}
+          >
+            ↓
+          </button>
+          <button
+            onClick={closeSearch}
+            title="Close search"
+            aria-label="Close search"
+            style={iconButtonStyle}
+          >
+            <IconCloseOutline16 />
+          </button>
+        </div>
+      )}
       <div ref={previewRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {view === "preview" ? (
           renderSlot(
@@ -1040,7 +1286,14 @@ function ArtifactCanvas(props: any) {
             },
           )
         ) : (
-          <CodeRenderer artifact={artifact} />
+          <CodeRenderer
+            artifact={artifact}
+            search={
+              searchOpen && searchQuery
+                ? { query: searchQuery, matches: searchMatches, currentIndex: searchIndex }
+                : undefined
+            }
+          />
         )}
         {selectMode && view === "preview" && (
           <SelectOverlay onSelect={setSelection} />
@@ -1154,21 +1407,15 @@ function ArtifactCanvas(props: any) {
           >
             <MagicWandIcon />
           </button>
+          <CopyButton artifact={artifact} style={iconButtonStyle} />
+          <DownloadButton sessionId={sessionId} artifact={artifact} style={iconButtonStyle} />
           <button
-            onClick={() => navigator.clipboard.writeText(artifact.content)}
-            title="Copy"
-            aria-label="Copy"
+            onClick={openSearch}
+            title="Find in artifact"
+            aria-label="Find in artifact"
             style={iconButtonStyle}
           >
-            <IconCopyOutline16 />
-          </button>
-          <button
-            onClick={() => downloadArtifact(artifact)}
-            title="Download"
-            aria-label="Download"
-            style={iconButtonStyle}
-          >
-            <IconDownloadOutline16 />
+            <IconSearchOutline16 />
           </button>
           <div style={{ position: "relative" }}>
             <button
@@ -1327,9 +1574,199 @@ function downloadArtifact(artifact: Artifact) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${artifact.artifact_id}.${ext}`;
+  const versionSuffix = artifact.version != null ? `-v${artifact.version}` : "";
+  a.download = `${artifact.artifact_id}${versionSuffix}.${ext}`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** Strip an HTML document down to its visible text (body only, tags removed). */
+function htmlToText(html: string): string {
+  const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html);
+  const div = document.createElement("div");
+  div.innerHTML = body ? body[1] : html;
+  return (div.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Plain-text rendering of an artifact, or null when there is no meaningful
+ * "rendered" form distinct from the source (code, SVG, options). */
+function renderedText(artifact: Artifact): string | null {
+  if (artifact.type === "markdown") return extractMarkdownPlainText(artifact.content);
+  if (artifact.type === "html") return htmlToText(artifact.content);
+  return null;
+}
+
+const menuItemStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  padding: "4px 8px",
+  border: "none",
+  borderRadius: "4px",
+  background: "transparent",
+  cursor: "pointer",
+  fontSize: "12px",
+  color: "var(--dsw-alias-label-primary)",
+  textAlign: "left",
+};
+
+/** Dropdown container for the floating action-stack menus (opens to the left). */
+const menuStyle: React.CSSProperties = {
+  position: "absolute",
+  right: "calc(100% + 4px)",
+  top: "50%",
+  transform: "translateY(-50%)",
+  zIndex: 30,
+  minWidth: "140px",
+  background: "var(--dsw-alias-bg-layer-3)",
+  border: "1px solid var(--dsw-alias-border-l3)",
+  borderRadius: "8px",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+  padding: "4px",
+};
+
+/** Copy button: copies the source directly for code/SVG/options, and offers a
+ * "Copy source" / "Copy rendered" menu for Markdown and HTML. */
+function CopyButton({
+  artifact,
+  style,
+}: {
+  artifact: Artifact;
+  style: React.CSSProperties;
+}) {
+  const rendered = renderedText(artifact);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const doCopy = (text: string) => {
+    void writeClipboard(text);
+    setOpen(false);
+  };
+
+  if (rendered === null) {
+    return (
+      <button
+        onClick={() => doCopy(artifact.content)}
+        title="Copy"
+        aria-label="Copy"
+        style={style}
+      >
+        <IconCopyOutline16 />
+      </button>
+    );
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Copy"
+        aria-label="Copy"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={style}
+      >
+        <IconCopyOutline16 />
+      </button>
+      {open && (
+        <div role="menu" style={menuStyle}>
+          <button role="menuitem" onClick={() => doCopy(artifact.content)} style={menuItemStyle}>
+            Copy source
+          </button>
+          <button role="menuitem" onClick={() => doCopy(rendered)} style={menuItemStyle}>
+            Copy rendered
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Download button: downloads the current version directly when there is only
+ * one, and offers "Download current" / "Download all versions" otherwise. */
+function DownloadButton({
+  sessionId,
+  artifact,
+  style,
+}: {
+  sessionId: string;
+  artifact: Artifact;
+  style: React.CSSProperties;
+}) {
+  const versions = useArtifactVersions(sessionId, artifact.artifact_id);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const downloadAll = () => {
+    // Oldest first, staggered so the browser doesn't collapse the batch.
+    const ordered = [...versions].sort((a, b) => (a.version ?? 0) - (b.version ?? 0));
+    ordered.forEach((v, i) => {
+      setTimeout(() => downloadArtifact(v), i * 300);
+    });
+    setOpen(false);
+  };
+
+  if (versions.length <= 1) {
+    return (
+      <button
+        onClick={() => downloadArtifact(artifact)}
+        title="Download"
+        aria-label="Download"
+        style={style}
+      >
+        <IconDownloadOutline16 />
+      </button>
+    );
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Download"
+        aria-label="Download"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={style}
+      >
+        <IconDownloadOutline16 />
+      </button>
+      {open && (
+        <div role="menu" style={menuStyle}>
+          <button
+            role="menuitem"
+            onClick={() => {
+              downloadArtifact(artifact);
+              setOpen(false);
+            }}
+            style={menuItemStyle}
+          >
+            Download current
+          </button>
+          <button role="menuitem" onClick={downloadAll} style={menuItemStyle}>
+            Download all versions
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── inline tool card ────────────────────────────────────────────────────────
