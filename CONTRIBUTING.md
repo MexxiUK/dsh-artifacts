@@ -16,17 +16,18 @@ Thanks for your interest in the DSH Artifact Canvas. Contributions are welcome.
 ## Development
 
 1. Clone the repo.
-2. Edit `packages/client-ui-artifact/src/client.tsx`.
+2. Edit `packages/artifact/src/client.tsx` (browser) or
+   `packages/artifact/lib/index.js` (host tool).
 3. Rebuild the client bundle:
 
    ```sh
-   cd packages/client-ui-artifact
+   cd packages/artifact
    npx esbuild src/client.tsx \
      --bundle --format=cjs --jsx=automatic \
      --external:react --external:react/jsx-runtime \
      --external:@deepseek-ai/dsh-client-ui-primitives \
      --outfile=lib/client.js \
-     --banner:js='window.__ModuleLoader__.load({ id: "@dsh-artifact/client-ui-artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' \
+     --banner:js='window.__ModuleLoader__.load({ id: "@dsh-artifact/artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' \
      --footer:js='return module.exports; } });'
    ```
 

@@ -1,4 +1,4 @@
-// @dsh-artifact/client-ui-artifact — browser half.
+// @dsh-artifact/artifact — browser half (canvas, card, renderers).
 //
 // Extensible artifact canvas. Registers:
 //   - the `details` side-panel slot (replacing the currently-unreachable
@@ -34,7 +34,7 @@ import {
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useCallback, useEffect, useRef, useSyncExternalStore, useState } from "react";
 
-const name = "@dsh-artifact/client-ui-artifact";
+const name = "@dsh-artifact/artifact";
 const inject = ["slots", "layout", "sessions"];
 
 // ── artifact store (per-session) ────────────────────────────────────────────

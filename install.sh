@@ -2,7 +2,7 @@
 # Install the DSH Artifact Canvas into a DeepSeek Harness profile.
 #
 # The script is idempotent: run it again to reinstall or to pick up changes.
-# It copies the three packages, patches the profile's cordis.patch.yml, and
+# It copies the two packages, patches the profile's cordis.patch.yml, and
 # creates the `artifact` agent preset.
 set -euo pipefail
 
@@ -75,7 +75,7 @@ generate_layout_fork() {
 
 # ── 1. Install the packages ──────────────────────────────────────────────────
 mkdir -p "$PKG_DEST"
-for pkg in tool-artifact client-ui-artifact client-ui-layout; do
+for pkg in artifact client-ui-layout; do
   if [ ! -d "$REPO_DIR/packages/$pkg" ]; then
     echo "  ! missing package: packages/$pkg" >&2
     exit 1
@@ -93,9 +93,28 @@ for pkg in tool-artifact client-ui-artifact client-ui-layout; do
   echo "  ✓ installed @dsh-artifact/$pkg"
 done
 
+# Remove the pre-0.3.2 split packages (merged into `artifact`).
+for old in tool-artifact client-ui-artifact; do
+  if [ -d "$PKG_DEST/$old" ]; then
+    rm -rf "$PKG_DEST/$old"
+    echo "  ✓ removed legacy @dsh-artifact/$old"
+  fi
+done
+
 # ── 2. Patch the profile ─────────────────────────────────────────────────────
 mkdir -p "$(dirname "$PATCH_FILE")"
 touch "$PATCH_FILE"
+
+# Migrate the pre-0.3.2 client package name in an existing patch file.
+if grep -qF "@dsh-artifact/client-ui-artifact" "$PATCH_FILE"; then
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const s = fs.readFileSync(file, "utf8");
+    fs.writeFileSync(file, s.split("@dsh-artifact/client-ui-artifact").join("@dsh-artifact/artifact"));
+  ' "$PATCH_FILE"
+  echo "  ✓ migrated ui-artifact package name"
+fi
 
 append_if_missing() {
   local marker="$1"
@@ -113,7 +132,7 @@ append_if_missing "ui-artifact" "
 # details side-panel.
 - insert:
     - id: ui-artifact
-      name: '@dsh-artifact/client-ui-artifact'
+      name: '@dsh-artifact/artifact'
 "
 
 append_if_missing "ui-layout-wide" "
@@ -172,20 +191,20 @@ if [ -n "$STANDARD_PRESET" ]; then
 else
   echo "  ! could not find a standard preset" >&2
   echo "    create $PRESET_DIR/agent.cordis.yml manually, then add:" >&2
-  echo "      - id: tool-artifact" >&2
-  echo "        name: '@dsh-artifact/tool-artifact'" >&2
+  echo "      - id: artifact" >&2
+  echo "        name: '@dsh-artifact/artifact'" >&2
 fi
 
-if [ -f "$PRESET_DIR/agent.cordis.yml" ] && ! grep -qF "tool-artifact" "$PRESET_DIR/agent.cordis.yml"; then
+if [ -f "$PRESET_DIR/agent.cordis.yml" ] && ! grep -qF "@dsh-artifact/artifact" "$PRESET_DIR/agent.cordis.yml"; then
   cat >> "$PRESET_DIR/agent.cordis.yml" <<'EOF'
 
 # ── artifact canvas ─────────────────────────────────────────────────────────
 # The model-facing `artifact` tool: create/update HTML, Markdown, and code
 # artifacts surfaced in the canvas viewer.
-- id: tool-artifact
-  name: '@dsh-artifact/tool-artifact'
+- id: artifact
+  name: '@dsh-artifact/artifact'
 EOF
-  echo "  ✓ added tool-artifact to preset"
+  echo "  ✓ added artifact to preset"
 fi
 
 cat > "$PRESET_DIR/preset.yml" <<'EOF'

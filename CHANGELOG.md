@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-08-21
+
+### Changed
+
+- Merged the host tool and the browser canvas into a single
+  `@dsh-artifact/artifact` package with two entry points: `lib/index.js` for the
+  agent plane (the `artifact` tool and system-prompt section) and `lib/client.js`
+  for the browser (the canvas, card, and renderers). The old
+  `@dsh-artifact/tool-artifact` and `@dsh-artifact/client-ui-artifact` packages
+  are gone.
+- Added `ARCHITECTURE.md` documenting the package layout, the host/browser
+  split, and the layout fork.
+
 ## [0.3.1] - 2026-08-20
 
 ### Added
@@ -95,6 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wide-details layout fork.
 - Idempotent install script.
 
+[0.3.2]: https://github.com/MexxiUK/dsh-artifacts/releases/tag/v0.3.2
 [0.3.1]: https://github.com/MexxiUK/dsh-artifacts/releases/tag/v0.3.1
 [0.3.0]: https://github.com/MexxiUK/dsh-artifacts/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MexxiUK/dsh-artifacts/releases/tag/v0.2.0

@@ -84,8 +84,7 @@ them live. You can:
 
 | Package | Plane | Role |
 |---|---|---|
-| `packages/tool-artifact` | host (agent preset) | Registers the `artifact` tool and a system-prompt section. |
-| `packages/client-ui-artifact` | browser | Registers the canvas, the artifact card, the renderers, the select-and-ask loop, and the liveness badge. |
+| `packages/artifact` | host + browser | One plugin, two entry points: `lib/index.js` registers the `artifact` tool and a system-prompt section (agent plane); `lib/client.js` registers the canvas, the artifact card, the renderers, the select-and-ask loop, and the liveness badge (browser). |
 | `packages/client-ui-layout` | browser | A wide-details layout, generated at install time from the installed `dsh-client-ui-layout`. |
 
 ## How it works
@@ -200,7 +199,7 @@ ollama launch dsh
    parallel. Two registrations at the same priority on one slot throw and stop
    the plugin load.
 3. Create the agent preset `artifact` at `$DSH_HOME/.agent-presets/artifact/`.
-   It is a copy of `standard` plus the `tool-artifact` row. Set it as the
+   It is a copy of `standard` plus the `artifact` row. Set it as the
    default.
 4. Install the layout `@dsh-artifact/client-ui-layout`. Swap it in through the
    patch layer. Disable the shipped `ui-layout` row. Insert the fork as
@@ -214,13 +213,13 @@ Build the client bundle with esbuild. The bundle uses the
 `window.__ModuleLoader__.load` format.
 
 ```sh
-cd packages/client-ui-artifact
+cd packages/artifact
 npx esbuild src/client.tsx \
   --bundle --format=cjs --jsx=automatic \
   --external:react --external:react/jsx-runtime \
   --external:@deepseek-ai/dsh-client-ui-primitives \
   --outfile=lib/client.js \
-  --banner:js='window.__ModuleLoader__.load({ id: "@dsh-artifact/client-ui-artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' \
+  --banner:js='window.__ModuleLoader__.load({ id: "@dsh-artifact/artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' \
   --footer:js='return module.exports; } });'
 ```
 

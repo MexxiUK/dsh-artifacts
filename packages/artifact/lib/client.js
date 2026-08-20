@@ -1,4 +1,4 @@
-window.__ModuleLoader__.load({ id: "@dsh-artifact/client-ui-artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;
+window.__ModuleLoader__.load({ id: "@dsh-artifact/artifact", factory: (require) => { var module = { exports: {} }; var exports = module.exports;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -28,7 +28,7 @@ module.exports = __toCommonJS(client_exports);
 var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
-var name = "@dsh-artifact/client-ui-artifact";
+var name = "@dsh-artifact/artifact";
 var inject = ["slots", "layout", "sessions"];
 var sessions = /* @__PURE__ */ new Map();
 var listeners = /* @__PURE__ */ new Set();

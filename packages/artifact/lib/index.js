@@ -1,4 +1,4 @@
-// @dsh-artifact/tool-artifact — host-side `artifact` tool.
+// @dsh-artifact/artifact — host-side `artifact` tool (agent plane).
 //
 // Registers a single model-facing tool that creates or updates a renderable
 // artifact (HTML or Markdown) surfaced in the canvas viewer. The canonical
@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const name = "tool-artifact";
+const name = "artifact";
 
 const inject = ["tools", "systemPrompt"];
 
