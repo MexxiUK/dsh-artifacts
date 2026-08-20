@@ -16,6 +16,63 @@ echo "DSH Artifact Canvas installer"
 echo "  DSH_HOME: $DSH_HOME"
 echo
 
+# ── Layout fork patch ────────────────────────────────────────────────────────
+# The wide-details fork is generated at install time from the installed DSH's
+# layout, so it stays in sync with whatever version is running. Each entry is a
+# literal "old|new" string replacement; if any target is missing (upstream
+# changed), generation fails and the frozen copy shipped in this repo is used.
+LAYOUT_PATCH=(
+  'clampWidth(details, 300, 520)|clampWidth(details, 300, Math.max(520, Math.round(viewport * 0.7)))'
+  '640|320'
+  'clampWidth(px, 300, 520)|clampWidth(px, 300, Math.max(520, Math.round(window.innerWidth * 0.7)))'
+  'd.details = 360|d.details = Math.max(300, Math.round(window.innerWidth * 0.55))'
+  '@deepseek-ai/dsh-client-ui-layout|@dsh-artifact/client-ui-layout'
+)
+
+# Locate the installed upstream layout bundle (mirrors find_standard_preset).
+find_upstream_layout() {
+  local candidate dsh_real pkg_root
+
+  if command -v dsh >/dev/null 2>&1; then
+    dsh_real="$(readlink -f "$(command -v dsh)" 2>/dev/null || command -v dsh)"
+    pkg_root="$(dirname "$(dirname "$dsh_real")")"
+    candidate="$pkg_root/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js"
+    [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    candidate="$(npm root -g 2>/dev/null)/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js"
+    [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  fi
+
+  return 1
+}
+
+# Apply the wide-details patch to an upstream bundle, writing the fork to dest.
+# Returns 0 on success, 1 if any patch target is missing.
+generate_layout_fork() {
+  local upstream="$1" dest="$2" tmp pair old new
+  tmp="$(mktemp)"
+  cp "$upstream" "$tmp"
+  for pair in "${LAYOUT_PATCH[@]}"; do
+    old="${pair%%|*}"
+    new="${pair#*|}"
+    if ! grep -qF "$old" "$tmp"; then
+      echo "  ! layout patch target missing: $old" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    node -e '
+      const fs = require("fs");
+      const [file, old, rep] = process.argv.slice(1);
+      const s = fs.readFileSync(file, "utf8");
+      fs.writeFileSync(file, s.split(old).join(rep));
+    ' "$tmp" "$old" "$new"
+  done
+  mv "$tmp" "$dest"
+  return 0
+}
+
 # ── 1. Install the packages ──────────────────────────────────────────────────
 mkdir -p "$PKG_DEST"
 for pkg in tool-artifact client-ui-artifact client-ui-layout; do
@@ -25,6 +82,14 @@ for pkg in tool-artifact client-ui-artifact client-ui-layout; do
   fi
   rm -rf "$PKG_DEST/$pkg"
   cp -r "$REPO_DIR/packages/$pkg" "$PKG_DEST/$pkg"
+  if [ "$pkg" = "client-ui-layout" ]; then
+    UPSTREAM_LAYOUT="$(find_upstream_layout || true)"
+    if [ -n "$UPSTREAM_LAYOUT" ] && generate_layout_fork "$UPSTREAM_LAYOUT" "$PKG_DEST/$pkg/lib/client.js"; then
+      echo "  ✓ regenerated layout fork from installed DSH"
+    else
+      echo "  · using frozen layout fork (could not regenerate)"
+    fi
+  fi
   echo "  ✓ installed @dsh-artifact/$pkg"
 done
 

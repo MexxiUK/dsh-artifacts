@@ -1,6 +1,6 @@
 # DeepSeek Harness Artifact Canvas
 
-**Render HTML, Markdown, and code in a side panel — with syntax highlighting, select-and-ask, and an extensible plugin API.**
+**Render HTML, Markdown, SVG, code, and interactive options in a side panel — with syntax highlighting, select-and-ask, and an extensible plugin API.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4f46e5.svg)](https://github.com/deepseek-ai/deepseek-harness)
@@ -9,7 +9,7 @@
 
 ![DeepSeek Harness Artifact Canvas rendering an artifact in the side panel](docs/hero.gif)
 
-The Artifact Canvas brings Claude- and Gemini-style artifacts to
+The Artifact Canvas adds a rendered artifact viewer to
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). When the
 model builds a web page, a document, or a code file, the canvas renders it in a
 dedicated side panel instead of dumping raw text into the chat.
@@ -39,10 +39,19 @@ This plugin adds a dedicated **Artifact canvas** to the `details` column. The
 model writes artifacts through a new `artifact` tool, and the canvas renders
 them live. You can:
 
-- **Render HTML, Markdown, and code** in a sandboxed, scrollable panel.
+- **Render HTML, Markdown, SVG, code, and interactive options** in a sandboxed,
+  scrollable panel.
+- **Brainstorm interactively** — the AI can present options as a visual showing
+  the choices side by side; pick one and continue.
+- **Keep the chat clean** — artifacts appear as a compact card (icon, title,
+  action hint), not a wall of code or a rendered page inline.
 - **Read code with syntax highlighting** (shiki) — no more raw text.
 - **Select and ask** — drag a rectangle over any region and ask the model about
   it.
+- **Debug with a console** — capture JS errors from HTML and options artifacts
+  and view them in a console panel.
+- **Fix with one click** — a magic-wand button asks the model to review and fix
+  the artifact.
 - **Extend it** — other plugins add renderers, toolbar buttons, and panels
   through child slots.
 - **Track liveness** — a badge marks the current artifact versus older versions.
@@ -52,11 +61,11 @@ them live. You can:
   switching chats never leaks them.
 - **Go fullscreen** — expand the canvas to fill the viewport and back.
 - **Work in a wide layout** — the canvas opens at ~55% and resizes to ~70% of
-  the viewport, Gemini-style.
+  the viewport.
 
 | Without the canvas | With the canvas |
 |---|---|
-| HTML, Markdown, and code appear as raw text in the chat | Rendered in a dedicated side panel |
+| HTML, Markdown, SVG, code, and options appear as raw text in the chat | Rendered in a dedicated side panel |
 | No syntax highlighting | shiki syntax highlighting for every language |
 | Cannot ask about a specific part | Drag-select any region and ask the model |
 | One-size-fits-all output | Extensible renderers, chrome, and panels |
@@ -69,19 +78,21 @@ them live. You can:
 | Package | Plane | Role |
 |---|---|---|
 | `packages/tool-artifact` | host (agent preset) | Registers the `artifact` tool and a system-prompt section. |
-| `packages/client-ui-artifact` | browser | Registers the canvas, the inline card, the renderers, the select-and-ask loop, and the liveness badge. |
-| `packages/client-ui-layout` | browser | A fork of `dsh-client-ui-layout` with wide details. |
+| `packages/client-ui-artifact` | browser | Registers the canvas, the artifact card, the renderers, the select-and-ask loop, and the liveness badge. |
+| `packages/client-ui-layout` | browser | A wide-details layout, generated at install time from the installed `dsh-client-ui-layout`. |
 
 ## How it works
 
 1. The model calls `artifact` with `action: create` and the artifact source.
 2. The tool stores the artifact envelope in the tool result `meta`. The envelope
    holds `artifact_id`, `title`, `type`, `content`, `language`, and `version`.
-3. The inline card reads the `meta`. It shows a preview and an "Open in canvas"
-   button.
-4. "Open in canvas" selects the artifact. It calls `ctx.layout.openDetails()`.
-   The side panel opens. It renders Markdown with `MarkdownText`, HTML in a
-   sandboxed iframe, or source code with `CodeBlock`.
+3. The artifact card reads the `meta`. It shows a title and an action hint
+   ("Click to view"). The card keeps the chat clean — the content itself is not
+   rendered inline.
+4. Clicking the card selects the artifact and calls `ctx.layout.openDetails()`.
+   The side panel opens. It renders Markdown with `MarkdownText`, HTML and
+   options in a sandboxed iframe, SVG as an image, or source code with
+   `CodeBlock`.
 5. A **Preview / Code** toggle switches between the rendered view and the raw
    source. The Code view shows syntax highlighting. The highlighting uses the
    artifact `language`.
@@ -90,18 +101,18 @@ them live. You can:
 flowchart LR
   Model[Model] -->|artifact tool| Tool[artifact tool]
   Tool -->|presentationMeta| Meta[tool result meta]
-  Meta --> Card[inline card]
-  Card -->|Open in canvas| Canvas[canvas]
-  Canvas -->|renders| Out[HTML / Markdown / code]
+  Meta --> Card[artifact card]
+  Card -->|click| Canvas[canvas]
+  Canvas -->|renders| Out[HTML / Markdown / SVG / code / options]
   Canvas -->|select-and-ask| Model
 ```
 
 ## Select and ask
 
-The canvas header has a **Select** button. Click the button to enter select
-mode. A crosshair overlay covers the preview. Drag to draw a rectangle. Release
-to show a popup. Type a question or describe an issue. Press Enter or click
-**Send**.
+A floating action stack in the lower-right of the canvas has a **Select**
+button. Click the button to enter select mode. A crosshair overlay covers the
+preview. Drag to draw a rectangle. Release to show a popup. Type a question or
+describe an issue. Press Enter or click **Send**.
 
 The canvas extracts the text under the selection. For Markdown and code, it
 extracts the text. For HTML, it reports the region geometry. The iframe is
@@ -115,7 +126,7 @@ the canvas.
 
 | Slot | Kind | What plugins add |
 |---|---|---|
-| `artifact.renderer` | keyed by artifact `type` | New renderers. Built-in: `html`, `markdown`, `code`. |
+| `artifact.renderer` | keyed by artifact `type` | New renderers. Built-in: `html`, `markdown`, `code`, `svg`, `options`. |
 | `artifact.interaction` | list | postMessage handlers for the iframe. |
 | `artifact.chrome` | list | Toolbar buttons and status indicators. |
 | `artifact.panel` | list | Extra panels and tabs. |
@@ -132,8 +143,20 @@ ctx.slots.inject("artifact.renderer", () =>
 
 HTML artifacts run in an opaque-origin iframe. The artifact can send
 `postMessage({ v: 1, type: "artifact:select", value, label })` to the parent.
-The canvas checks `event.origin === "null"`. It then feeds the selection to the
-model as a queued user message.
+The canvas checks `event.origin === "null"` and that `event.source` is the
+artifact's own iframe. It then feeds the selection to the model as a queued
+user message.
+
+## Console
+
+HTML and options artifacts get a small error-capture script injected into their
+source. It reports JavaScript errors, unhandled promise rejections,
+`console.error` calls, and failed resource loads back to the canvas. A terminal
+button in the floating action stack opens a console panel that lists them.
+
+A magic-wand button in the same stack asks the model to fix the artifact. With
+captured errors it sends the error list; with none it asks the model to review
+the artifact for visual or layout issues.
 
 ## Liveness
 
@@ -171,9 +194,11 @@ ollama launch dsh
 3. Create the agent preset `artifact` at `$DSH_HOME/.agent-presets/artifact/`.
    It is a copy of `standard` plus the `tool-artifact` row. Set it as the
    default.
-4. Install the layout fork `@dsh-artifact/client-ui-layout`. Swap it in through
-   the patch layer. Disable the shipped `ui-layout` row. Insert the fork as
-   `ui-layout-wide`.
+4. Install the layout `@dsh-artifact/client-ui-layout`. Swap it in through the
+   patch layer. Disable the shipped `ui-layout` row. Insert the fork as
+   `ui-layout-wide`. The installer regenerates it from the installed
+   `dsh-client-ui-layout` with a small patch, so it tracks the running DSH
+   version.
 
 ## Build
 
@@ -208,5 +233,9 @@ arrive.
 - The built-in interaction loop handles `artifact:select` only. Other message
   types use the `artifact.interaction` slot. The canvas cannot send messages
   back to the iframe yet.
-- The layout fork is a byte-copy of `dsh-client-ui-layout`. Re-sync it if the
-  upstream layout changes.
+- The wide-details layout is generated at install time by patching the installed
+  `dsh-client-ui-layout`. If DSH changes the patched code, the installer falls
+  back to the frozen copy shipped in this repo.
+- Version numbers are tracked in memory by the `artifact` tool. After a DeepSeek
+  Harness restart, updating an artifact created before the restart fails with
+  "unknown artifact_id" — create a fresh artifact instead.

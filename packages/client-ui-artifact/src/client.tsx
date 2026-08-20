@@ -8,8 +8,8 @@
 //       * `artifact.interaction` (list) — postMessage handlers for the iframe;
 //       * `artifact.chrome`      (list) — toolbar buttons / status indicators;
 //       * `artifact.panel`       (list) — extra panels/tabs inside the canvas.
-//   - a keyed `tool.call.toolview` for the `artifact` tool (inline card with
-//     an "Open in canvas" affordance).
+//   - a keyed `tool.call.toolview` for the `artifact` tool (a container card
+//     that opens the canvas when clicked).
 //
 // The artifact envelope rides the tool result's `meta` (set by the host tool's
 // `output.presentationMeta`), so the canvas and card read the same frozen data.
@@ -29,7 +29,7 @@ import {
   IconFullscreenOutline16,
   MarkdownText,
 } from "@deepseek-ai/dsh-client-ui-primitives";
-import { useEffect, useRef, useSyncExternalStore, useState } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore, useState } from "react";
 
 const name = "@dsh-artifact/client-ui-artifact";
 const inject = ["slots", "layout", "sessions"];
@@ -47,6 +47,15 @@ type Artifact = {
   content: string;
   language?: string;
   version?: number;
+};
+
+/** A runtime error reported by an artifact's sandboxed iframe. */
+type ArtifactError = {
+  kind: string;
+  message: string;
+  source?: string;
+  line?: number;
+  col?: number;
 };
 
 type SessionState = {
@@ -155,13 +164,94 @@ function artifactFromBlock(block: any): Artifact | null {
 
 // ── built-in renderers (registered into `artifact.renderer`) ────────────────
 
+// Injected into HTML artifacts to capture runtime errors and report them to
+// the parent over the same opaque-origin postMessage channel as select-and-ask.
+const ERROR_CAPTURE_SCRIPT = `<script>(function(){
+  function report(kind, message, source, line, col) {
+    try { parent.postMessage({ v: 1, type: "artifact:error", kind: kind, message: message, source: source, line: line, col: col }, "*"); } catch (e) {}
+  }
+  window.addEventListener("error", function(e) {
+    if (e.message) report("error", e.message, e.filename, e.lineno, e.colno);
+    else if (e.target && e.target.tagName) report("resource", "Failed to load " + e.target.tagName.toLowerCase() + (e.target.src || e.target.href || ""));
+  }, true);
+  window.addEventListener("unhandledrejection", function(e) {
+    report("unhandledrejection", String(e.reason));
+  });
+  var origError = console.error;
+  console.error = function() {
+    report("console.error", Array.prototype.map.call(arguments, String).join(" "));
+    origError.apply(console, arguments);
+  };
+})();</script>`;
+
+function lastIndexOfRegex(html: string, re: RegExp): number {
+  let m: RegExpExecArray | null;
+  let last = -1;
+  while ((m = re.exec(html)) !== null) last = m.index;
+  return last;
+}
+
+function injectErrorCapture(html: string): string {
+  // Inject before the LAST closing tag so a literal "</body>" inside a script
+  // string or comment doesn't break the injection.
+  const body = lastIndexOfRegex(html, /<\/body>/gi);
+  if (body !== -1) {
+    return html.slice(0, body) + ERROR_CAPTURE_SCRIPT + html.slice(body);
+  }
+  const head = lastIndexOfRegex(html, /<\/head>/gi);
+  if (head !== -1) {
+    return html.slice(0, head) + ERROR_CAPTURE_SCRIPT + html.slice(head);
+  }
+  return html + ERROR_CAPTURE_SCRIPT;
+}
+
+// Injected into the options visual so its body fills the iframe height. The
+// model is also asked to stretch its layout, but this guarantees the body is
+// full-height and the last child (the layout container) stretches to fill it
+// even if the model forgets. `:last-child` (not `*`) avoids stretching a
+// header/title the model might add above the container.
+const FILL_CSS = `<style>html, body { height: 100%; margin: 0; } body { display: flex; flex-direction: column; } body > *:last-child { flex: 1; min-height: 0; }</style>`;
+
+function injectFillCss(html: string): string {
+  const head = lastIndexOfRegex(html, /<\/head>/gi);
+  if (head !== -1) {
+    return html.slice(0, head) + FILL_CSS + html.slice(head);
+  }
+  return FILL_CSS + html;
+}
+
+// The contentWindows of the mounted artifact iframes (HTML and options visual).
+// The canvas validates postMessage `event.source` against this set so only our
+// own iframes can feed selections/errors back — not any other opaque-origin
+// frame on the page.
+const iframeWindows = new Set<Window>();
+
+function useTrackIframe() {
+  const prev = useRef<Window | null>(null);
+  return useCallback((el: HTMLIFrameElement | null) => {
+    if (prev.current) {
+      iframeWindows.delete(prev.current);
+      prev.current = null;
+    }
+    if (el) {
+      const win = el.contentWindow;
+      if (win) {
+        iframeWindows.add(win);
+        prev.current = win;
+      }
+    }
+  }, []);
+}
+
 function HtmlRenderer({ artifact }: { artifact: Artifact }) {
+  const ref = useTrackIframe();
   // Sandboxed iframe: opaque origin, scripts allowed but no same-origin, so
   // the artifact cannot reach the app's origin, cookies, or DOM.
   return (
     <iframe
+      ref={ref}
       sandbox="allow-scripts"
-      srcDoc={artifact.content}
+      srcDoc={injectErrorCapture(artifact.content)}
       title={artifact.title}
       style={{
         width: "100%",
@@ -190,6 +280,85 @@ function CodeRenderer({ artifact }: { artifact: Artifact }) {
         copyLabel="Copy"
         copiedLabel="Copied"
       />
+    </div>
+  );
+}
+
+function SvgRenderer({ artifact }: { artifact: Artifact }) {
+  // Render the SVG as a static image via a data URI. This keeps scripts out
+  // (unlike inline SVG) while still showing the graphic at its natural size.
+  const src = `data:image/svg+xml;utf8,${encodeURIComponent(artifact.content)}`;
+  return (
+    <div
+      style={{
+        padding: "16px",
+        overflow: "auto",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <img
+        src={src}
+        alt={artifact.title}
+        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+      />
+    </div>
+  );
+}
+
+/** Options data shape: an HTML visual showing the choices. */
+type OptionsData = {
+  visual?: string;
+};
+
+function OptionsRenderer({ artifact }: { artifact: Artifact }) {
+  const ref = useTrackIframe();
+  let data: OptionsData | null = null;
+  let error: string | null = null;
+  try {
+    data = JSON.parse(artifact.content) as OptionsData;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      error = 'Expected a JSON object with a "visual" (a complete HTML document).';
+    }
+  } catch (e) {
+    error = `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`;
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: "16px", overflow: "auto", height: "100%" }}>
+        <div style={{ fontWeight: 600, color: "var(--dsw-alias-state-error-primary)" }}>
+          Malformed options artifact
+        </div>
+        <div
+          style={{
+            fontSize: "12px",
+            marginTop: "4px",
+            color: "var(--dsw-alias-label-secondary)",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  const visual = typeof data?.visual === "string" ? data.visual : undefined;
+
+  return (
+    <div style={{ height: "100%" }}>
+      {visual && (
+        <iframe
+          ref={ref}
+          sandbox="allow-scripts"
+          srcDoc={injectErrorCapture(injectFillCss(visual))}
+          title={artifact.title}
+          style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
+        />
+      )}
     </div>
   );
 }
@@ -405,6 +574,72 @@ function FullscreenExitIcon({ size = 16 }: { size?: number }) {
         d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"
         fill="currentColor"
       />
+    </svg>
+  );
+}
+
+/** Terminal glyph for the console toggle. */
+function ConsoleIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M7 9.5 10.5 12 7 14.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12.5 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Magic wand (with sparkles) for the "ask the AI to fix" action. */
+function MagicWandIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path d="M4 20 16.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M7.5 3.5 8.4 6l2.5.9-2.5.9-.9 2.5L6.6 7.8 4.1 6.9l2.5-.9.9-2.5Z"
+        fill="currentColor"
+      />
+      <path
+        d="M17 12.5 17.7 15l2.5.7-2.5.7-.7 2.5-.7-2.5-2.5-.7 2.5-.7.7-2.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+/** Abstract geometric mark (triangle + circle + rectangle) for the artifact card. */
+function ArtifactIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path d="M12 4.5 18.5 15.5H5.5L12 4.5Z" fill="currentColor" />
+      <circle cx="7.5" cy="18.5" r="2.75" fill="currentColor" />
+      <rect x="13" y="15.75" width="6.5" height="5.5" rx="1.5" fill="currentColor" />
     </svg>
   );
 }
@@ -646,6 +881,13 @@ function ArtifactCanvas(props: any) {
   const previewRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [errors, setErrors] = useState<ArtifactError[]>([]);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+
+  // Clear captured errors whenever the rendered artifact (or its version) changes.
+  useEffect(() => {
+    setErrors([]);
+  }, [artifact?.artifact_id, artifact?.version]);
 
   // Track native fullscreen state so the button can flip between expand/contract.
   useEffect(() => {
@@ -681,18 +923,59 @@ function ArtifactCanvas(props: any) {
     cancelSelect();
   };
 
+  const fixErrors = () => {
+    if (!prompt || !artifact) return;
+    if (errors.length > 0) {
+      const message = [
+        `The artifact "${artifact.title}" has the following errors:`,
+        ...errors.map(
+          (e) => `- ${e.kind}: ${e.message}${e.line != null ? ` (line ${e.line})` : ""}`,
+        ),
+        "",
+        "Please fix these errors and update the artifact.",
+      ].join("\n");
+      prompt(message);
+    } else {
+      prompt(
+        `The user asked you to fix the artifact "${artifact.title}". It may have visual or layout issues that were not auto-detected. Please review it and update the artifact with a fix.`,
+      );
+    }
+  };
+
   // Interaction loop: listen for postMessage from the sandboxed iframe. Only
   // accept messages whose source is the iframe we rendered and whose origin is
   // "null" (opaque origin) — never trust a same-origin or cross-origin frame.
   useEffect(() => {
     if (!artifact || artifact.type !== "html" || !prompt) return;
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as { v?: number; type?: string; value?: unknown; label?: string } | null;
+      const data = event.data as {
+        v?: number;
+        type?: string;
+        value?: unknown;
+        label?: string;
+        kind?: unknown;
+        message?: unknown;
+        source?: unknown;
+        line?: unknown;
+        col?: unknown;
+      } | null;
       if (!data || data.v !== 1) return;
       if (event.origin !== "null") return;
+      if (!iframeWindows.has(event.source as Window)) return;
       if (data.type === "artifact:select" && data.value != null) {
         const label = data.label != null ? ` (${data.label})` : "";
         prompt(`The user selected: ${String(data.value)}${label}`);
+      } else if (data.type === "artifact:error" && data.message != null) {
+        setErrors((prev) => [
+          ...prev,
+          {
+            kind: String(data.kind ?? "error"),
+            message: String(data.message),
+            source: data.source != null ? String(data.source) : undefined,
+            line: typeof data.line === "number" ? data.line : undefined,
+            col: typeof data.col === "number" ? data.col : undefined,
+          },
+        ]);
       }
     };
     window.addEventListener("message", onMessage);
@@ -732,56 +1015,9 @@ function ArtifactCanvas(props: any) {
           <VersionSwitcher sessionId={sessionId} artifact={artifact} />
         )}
         <LivenessBadge live={isLive} />
+        <ViewToggle view={view} onChange={setView} />
         <span style={{ flex: 1 }} />
         {renderSlot("artifact.chrome", { artifact })}
-        <ViewToggle view={view} onChange={setView} />
-        <button
-          onClick={() => {
-            if (selectMode) cancelSelect();
-            else {
-              setSelectMode(true);
-              setSelection(null);
-              setAskText("");
-            }
-          }}
-          title={selectMode ? "Cancel" : "Select"}
-          aria-label={selectMode ? "Cancel" : "Select"}
-          style={{
-            ...iconButtonStyle,
-            ...(selectMode
-              ? {
-                  background: "var(--dsw-alias-state-business-primary, #3b82f6)",
-                  color: "#fff",
-                }
-              : {}),
-          }}
-        >
-          <CursorIcon />
-        </button>
-        <button
-          onClick={() => navigator.clipboard.writeText(artifact.content)}
-          title="Copy"
-          aria-label="Copy"
-          style={iconButtonStyle}
-        >
-          <IconCopyOutline16 />
-        </button>
-        <button
-          onClick={() => downloadArtifact(artifact)}
-          title="Download"
-          aria-label="Download"
-          style={iconButtonStyle}
-        >
-          <IconDownloadOutline16 />
-        </button>
-        <button
-          onClick={toggleFullscreen}
-          title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-          aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-          style={iconButtonStyle}
-        >
-          {isFullscreen ? <FullscreenExitIcon /> : <IconFullscreenOutline16 />}
-        </button>
         {closeDetails && (
           <button
             onClick={closeDetails}
@@ -795,10 +1031,14 @@ function ArtifactCanvas(props: any) {
       </div>
       <div ref={previewRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {view === "preview" ? (
-          renderSlot("artifact.renderer", { artifact }, {
-            entryKey: artifact.type,
-            fallback: <RawFallback artifact={artifact} />,
-          })
+          renderSlot(
+            "artifact.renderer",
+            { artifact },
+            {
+              entryKey: artifact.type,
+              fallback: <RawFallback artifact={artifact} />,
+            },
+          )
         ) : (
           <CodeRenderer artifact={artifact} />
         )}
@@ -866,7 +1106,163 @@ function ArtifactCanvas(props: any) {
             </button>
           </div>
         )}
+        {/* Floating action stack (lower-right). */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: "12px",
+            right: "12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+            padding: "4px",
+            background: "var(--dsw-alias-bg-layer-2)",
+            border: "1px solid var(--dsw-alias-border-l3)",
+            borderRadius: "12px",
+            boxShadow: "var(--dsw-shadow-lv2)",
+            zIndex: 30,
+          }}
+        >
+          <button
+            onClick={() => {
+              if (selectMode) cancelSelect();
+              else {
+                setSelectMode(true);
+                setSelection(null);
+                setAskText("");
+              }
+            }}
+            title={selectMode ? "Cancel" : "Select"}
+            aria-label={selectMode ? "Cancel" : "Select"}
+            style={{
+              ...iconButtonStyle,
+              ...(selectMode
+                ? {
+                    background: "var(--dsw-alias-state-business-primary, #3b82f6)",
+                    color: "#fff",
+                  }
+                : {}),
+            }}
+          >
+            <CursorIcon />
+          </button>
+          <button
+            onClick={fixErrors}
+            title="Ask the AI to fix this artifact"
+            aria-label="Ask the AI to fix this artifact"
+            style={iconButtonStyle}
+          >
+            <MagicWandIcon />
+          </button>
+          <button
+            onClick={() => navigator.clipboard.writeText(artifact.content)}
+            title="Copy"
+            aria-label="Copy"
+            style={iconButtonStyle}
+          >
+            <IconCopyOutline16 />
+          </button>
+          <button
+            onClick={() => downloadArtifact(artifact)}
+            title="Download"
+            aria-label="Download"
+            style={iconButtonStyle}
+          >
+            <IconDownloadOutline16 />
+          </button>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setConsoleOpen(!consoleOpen)}
+              title="Console"
+              aria-label="Console"
+              style={iconButtonStyle}
+            >
+              <ConsoleIcon />
+            </button>
+            {errors.length > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: "-4px",
+                  right: "-4px",
+                  minWidth: "14px",
+                  height: "14px",
+                  padding: "0 3px",
+                  borderRadius: "7px",
+                  background: "var(--dsw-alias-state-error-primary)",
+                  color: "#fff",
+                  fontSize: "10px",
+                  lineHeight: "14px",
+                  textAlign: "center",
+                  pointerEvents: "none",
+                }}
+              >
+                {errors.length}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            style={iconButtonStyle}
+          >
+            {isFullscreen ? <FullscreenExitIcon /> : <IconFullscreenOutline16 />}
+          </button>
+        </div>
       </div>
+      {consoleOpen && (
+        <div
+          style={{
+            borderTop: "1px solid var(--dsw-alias-border-l3)",
+            maxHeight: "200px",
+            overflow: "auto",
+            background: "var(--dsw-alias-bg-layer-1)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 12px",
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>Console</span>
+            <span style={{ color: "var(--dsw-alias-label-secondary)", fontSize: "12px" }}>
+              {errors.length === 0
+                ? "No errors"
+                : `${errors.length} error${errors.length === 1 ? "" : "s"}`}
+            </span>
+          </div>
+          {errors.length > 0 && (
+            <div>
+              {errors.map((e, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: "4px 12px",
+                    fontSize: "12px",
+                    borderTop: "1px solid var(--dsw-alias-border-l3)",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  }}
+                >
+                  <span style={{ color: "var(--dsw-alias-state-error-primary)", fontWeight: 600 }}>
+                    {e.kind}
+                  </span>
+                  <span style={{ color: "var(--dsw-alias-label-primary)" }}>: {e.message}</span>
+                  {e.line != null && (
+                    <span style={{ color: "var(--dsw-alias-label-tertiary)" }}>
+                      {" "}
+                      (line {e.line})
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {renderSlot("artifact.panel", { artifact })}
       {/* Interaction handlers: each entry mounts a postMessage listener (via
           useEffect) and renders nothing — the slot is a hook surface, not a
@@ -899,19 +1295,35 @@ const CODE_EXT: Record<string, string> = {
 };
 
 function downloadArtifact(artifact: Artifact) {
-  const ext =
-    artifact.type === "html"
-      ? "html"
-      : artifact.type === "code"
-        ? CODE_EXT[artifact.language ?? ""] ?? artifact.language ?? "txt"
-        : "md";
-  const mime =
-    artifact.type === "html"
-      ? "text/html"
-      : artifact.type === "code"
-        ? "text/plain"
-        : "text/markdown";
-  const blob = new Blob([artifact.content], { type: mime });
+  let content = artifact.content;
+  let ext: string;
+  let mime: string;
+
+  if (artifact.type === "options") {
+    // Download the visual HTML, not the JSON wrapper around it.
+    try {
+      const data = JSON.parse(artifact.content) as { visual?: string };
+      if (typeof data?.visual === "string") content = data.visual;
+    } catch {
+      // Malformed JSON — fall back to the raw content.
+    }
+    ext = "html";
+    mime = "text/html";
+  } else if (artifact.type === "html") {
+    ext = "html";
+    mime = "text/html";
+  } else if (artifact.type === "code") {
+    ext = CODE_EXT[artifact.language ?? ""] ?? artifact.language ?? "txt";
+    mime = "text/plain";
+  } else if (artifact.type === "svg") {
+    ext = "svg";
+    mime = "image/svg+xml";
+  } else {
+    ext = "md";
+    mime = "text/markdown";
+  }
+
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -921,6 +1333,24 @@ function downloadArtifact(artifact: Artifact) {
 }
 
 // ── inline tool card ────────────────────────────────────────────────────────
+
+/** Human-readable labels for the built-in artifact types (badge on the card). */
+const TYPE_LABELS: Record<string, string> = {
+  html: "HTML",
+  markdown: "Markdown",
+  code: "Code",
+  svg: "SVG",
+  options: "Options",
+};
+
+/** Action hint shown under the title, keyed by artifact type. */
+const ACTION_TEXT: Record<string, string> = {
+  html: "Click to view",
+  markdown: "Click to view document",
+  code: "Click to view code",
+  svg: "Click to view image",
+  options: "Click to view options",
+};
 
 function ArtifactToolRow(props: any) {
   const artifact = artifactFromBlock(props.block);
@@ -933,50 +1363,80 @@ function ArtifactToolRow(props: any) {
   }, [sessionId, artifact?.artifact_id, artifact?.version]);
 
   if (!artifact) return null;
+
+  const actionText = ACTION_TEXT[artifact.type] ?? "Click to view";
+
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => {
+        if (sessionId) setSelected(sessionId, artifact);
+        openCanvas?.();
+      }}
       style={{
-        padding: "8px 12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        width: "100%",
+        padding: "16px",
         border: "1px solid var(--dsw-alias-border-l3)",
-        borderRadius: "8px",
+        borderRadius: "12px",
+        background: "var(--dsw-alias-bg-layer-1)",
+        cursor: "pointer",
+        textAlign: "left",
+        font: "inherit",
+        color: "inherit",
+        appearance: "none",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <span style={{ fontWeight: 600 }}>{artifact.title}</span>
-        <span style={{ opacity: 0.6 }}>{artifact.type}</span>
-        <span style={{ flex: 1 }} />
-        {openCanvas && (
-          <button
-            onClick={() => {
-              if (sessionId) setSelected(sessionId, artifact);
-              openCanvas();
-            }}
-          >
-            Open in canvas
-          </button>
-        )}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "40px",
+          height: "40px",
+          flexShrink: 0,
+          borderRadius: "8px",
+          background: "var(--dsw-alias-bg-layer-2)",
+          color: "var(--dsw-alias-label-secondary)",
+        }}
+      >
+        <ArtifactIcon size={20} />
       </div>
-      <div style={{ maxHeight: "220px", overflow: "hidden", marginTop: "8px" }}>
-        {artifact.type === "html" ? (
-          <HtmlRenderer artifact={artifact} />
-        ) : artifact.type === "code" ? (
-          <pre
+      <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+          <span
             style={{
-              margin: 0,
-              padding: "8px",
+              fontWeight: 600,
+              color: "var(--dsw-alias-label-primary)",
               overflow: "hidden",
-              whiteSpace: "pre-wrap",
-              fontFamily: "var(--dsw-font-markdown-code-block)",
-              fontSize: "12px",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            {artifact.content.slice(0, 2000)}
-          </pre>
-        ) : (
-          <MarkdownRenderer artifact={artifact} />
-        )}
+            {artifact.title}
+          </span>
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: "11px",
+              fontWeight: 500,
+              letterSpacing: "0.02em",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              color: "var(--dsw-alias-label-secondary)",
+            }}
+          >
+            {TYPE_LABELS[artifact.type] ?? artifact.type.toUpperCase()}
+          </span>
+        </div>
+        <span style={{ fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }}>
+          {actionText}
+        </span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1029,6 +1489,12 @@ function apply(ctx: any) {
   );
   ctx.slots.inject("artifact.renderer", () =>
     ctx.slots.register({ name: "artifact.renderer", key: "code" }, CodeRenderer),
+  );
+  ctx.slots.inject("artifact.renderer", () =>
+    ctx.slots.register({ name: "artifact.renderer", key: "svg" }, SvgRenderer),
+  );
+  ctx.slots.inject("artifact.renderer", () =>
+    ctx.slots.register({ name: "artifact.renderer", key: "options" }, OptionsRenderer),
   );
 
   ctx.slots.inject(

@@ -34,16 +34,15 @@ window.__ModuleLoader__.load({
 		function computeColumns(viewport, sidebar, details) {
 			const s = sidebar === 0 ? 56 : clampWidth(sidebar, 264, 420);
 			const d0 = details === 0 ? 0 : clampWidth(details, 300, Math.max(520, Math.round(viewport * 0.7)));
-			const centerMin = 320;
-			if (s + d0 + centerMin <= viewport) return {
+			if (s + d0 + 320 <= viewport) return {
 				sidebar: s,
 				center: viewport - s - d0,
 				details: d0
 			};
-			const d1 = d0 === 0 ? 0 : Math.max(300, viewport - s - centerMin);
-			if (s + d1 + centerMin <= viewport) return {
+			const d1 = d0 === 0 ? 0 : Math.max(300, viewport - s - 320);
+			if (s + d1 + 320 <= viewport) return {
 				sidebar: s,
-				center: centerMin,
+				center: 320,
 				details: d1
 			};
 			return {
@@ -179,10 +178,7 @@ window.__ModuleLoader__.load({
 					raf ??= requestAnimationFrame(() => {
 						raf = null;
 						const width = el.getBoundingClientRect().width;
-						if (width > 0) {
-							setViewport(width);
-							actions.setViewport(width);
-						}
+						if (width > 0) setViewport(width);
 					});
 				});
 				observer.observe(el);
@@ -284,15 +280,14 @@ window.__ModuleLoader__.load({
 					sidebar: 280,
 					details: 0,
 					narrow: false,
-					narrowExpanded: false,
-					viewport: typeof window !== "undefined" ? window.innerWidth : 0
+					narrowExpanded: false
 				}),
 				actions: {
 					setSidebar: (d, px) => {
 						d.sidebar = clampWidth(px, 264, 420);
 					},
 					setDetails: (d, px) => {
-						d.details = clampWidth(px, 300, Math.max(520, Math.round(d.viewport * 0.7)));
+						d.details = clampWidth(px, 300, Math.max(520, Math.round(window.innerWidth * 0.7)));
 					},
 					toggleSidebar: (d) => {
 						if (d.narrow) d.narrowExpanded = !d.narrowExpanded;
@@ -303,11 +298,8 @@ window.__ModuleLoader__.load({
 						d.narrow = narrow;
 						d.narrowExpanded = false;
 					},
-					setViewport: (d, viewport) => {
-						d.viewport = viewport;
-					},
 					openDetails: (d) => {
-						if (d.details === 0) d.details = Math.max(300, Math.round(d.viewport * 0.55));
+						if (d.details === 0) d.details = Math.max(300, Math.round(window.innerWidth * 0.55));
 					},
 					closeDetails: (d) => {
 						d.details = 0;

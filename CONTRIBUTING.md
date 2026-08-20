@@ -7,7 +7,7 @@ Thanks for your interest in the DSH Artifact Canvas. Contributions are welcome.
 - **Report a bug** — open an issue with the DSH version and the steps to
   reproduce it.
 - **Add a renderer** — register a new `artifact.renderer` for a new artifact
-  type (for example `mermaid`, `react`, or `svg`). See the
+  type (for example `mermaid` or `react`). See the
   [Extensibility](README.md#extensibility-child-slots) section.
 - **Add a toolbar button or panel** — register into `artifact.chrome` or
   `artifact.panel`.

@@ -1,7 +1,7 @@
 {
   "name": "@dsh-artifact/client-ui-artifact",
-  "description": "Canvas for HTML, Markdown, and code artifacts: side panel, inline card, and renderers.",
-  "version": "0.1.1",
+  "description": "Canvas for HTML, Markdown, SVG, code, and interactive options artifacts: side panel, inline card, and renderers.",
+  "version": "0.3.0",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

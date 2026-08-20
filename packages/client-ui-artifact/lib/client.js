@@ -111,12 +111,73 @@ function artifactFromBlock(block) {
   }
   return null;
 }
+var ERROR_CAPTURE_SCRIPT = `<script>(function(){
+  function report(kind, message, source, line, col) {
+    try { parent.postMessage({ v: 1, type: "artifact:error", kind: kind, message: message, source: source, line: line, col: col }, "*"); } catch (e) {}
+  }
+  window.addEventListener("error", function(e) {
+    if (e.message) report("error", e.message, e.filename, e.lineno, e.colno);
+    else if (e.target && e.target.tagName) report("resource", "Failed to load " + e.target.tagName.toLowerCase() + (e.target.src || e.target.href || ""));
+  }, true);
+  window.addEventListener("unhandledrejection", function(e) {
+    report("unhandledrejection", String(e.reason));
+  });
+  var origError = console.error;
+  console.error = function() {
+    report("console.error", Array.prototype.map.call(arguments, String).join(" "));
+    origError.apply(console, arguments);
+  };
+})();<\/script>`;
+function lastIndexOfRegex(html, re) {
+  let m;
+  let last = -1;
+  while ((m = re.exec(html)) !== null) last = m.index;
+  return last;
+}
+function injectErrorCapture(html) {
+  const body = lastIndexOfRegex(html, /<\/body>/gi);
+  if (body !== -1) {
+    return html.slice(0, body) + ERROR_CAPTURE_SCRIPT + html.slice(body);
+  }
+  const head = lastIndexOfRegex(html, /<\/head>/gi);
+  if (head !== -1) {
+    return html.slice(0, head) + ERROR_CAPTURE_SCRIPT + html.slice(head);
+  }
+  return html + ERROR_CAPTURE_SCRIPT;
+}
+var FILL_CSS = `<style>html, body { height: 100%; margin: 0; } body { display: flex; flex-direction: column; } body > *:last-child { flex: 1; min-height: 0; }</style>`;
+function injectFillCss(html) {
+  const head = lastIndexOfRegex(html, /<\/head>/gi);
+  if (head !== -1) {
+    return html.slice(0, head) + FILL_CSS + html.slice(head);
+  }
+  return FILL_CSS + html;
+}
+var iframeWindows = /* @__PURE__ */ new Set();
+function useTrackIframe() {
+  const prev = (0, import_react.useRef)(null);
+  return (0, import_react.useCallback)((el) => {
+    if (prev.current) {
+      iframeWindows.delete(prev.current);
+      prev.current = null;
+    }
+    if (el) {
+      const win = el.contentWindow;
+      if (win) {
+        iframeWindows.add(win);
+        prev.current = win;
+      }
+    }
+  }, []);
+}
 function HtmlRenderer({ artifact }) {
+  const ref = useTrackIframe();
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
     "iframe",
     {
+      ref,
       sandbox: "allow-scripts",
-      srcDoc: artifact.content,
+      srcDoc: injectErrorCapture(artifact.content),
       title: artifact.title,
       style: {
         width: "100%",
@@ -138,6 +199,71 @@ function CodeRenderer({ artifact }) {
       lang: artifact.language ?? "text",
       copyLabel: "Copy",
       copiedLabel: "Copied"
+    }
+  ) });
+}
+function SvgRenderer({ artifact }) {
+  const src = `data:image/svg+xml;utf8,${encodeURIComponent(artifact.content)}`;
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    "div",
+    {
+      style: {
+        padding: "16px",
+        overflow: "auto",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center"
+      },
+      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "img",
+        {
+          src,
+          alt: artifact.title,
+          style: { maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }
+        }
+      )
+    }
+  );
+}
+function OptionsRenderer({ artifact }) {
+  const ref = useTrackIframe();
+  let data = null;
+  let error = null;
+  try {
+    data = JSON.parse(artifact.content);
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      error = 'Expected a JSON object with a "visual" (a complete HTML document).';
+    }
+  } catch (e) {
+    error = `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  if (error) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "16px", overflow: "auto", height: "100%" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { fontWeight: 600, color: "var(--dsw-alias-state-error-primary)" }, children: "Malformed options artifact" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          style: {
+            fontSize: "12px",
+            marginTop: "4px",
+            color: "var(--dsw-alias-label-secondary)",
+            whiteSpace: "pre-wrap"
+          },
+          children: error
+        }
+      )
+    ] });
+  }
+  const visual = typeof data?.visual === "string" ? data.visual : void 0;
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { height: "100%" }, children: visual && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    "iframe",
+    {
+      ref,
+      sandbox: "allow-scripts",
+      srcDoc: injectErrorCapture(injectFillCss(visual)),
+      title: artifact.title,
+      style: { width: "100%", height: "100%", border: "none", background: "#fff" }
     }
   ) });
 }
@@ -353,6 +479,81 @@ function FullscreenExitIcon({ size = 16 }) {
     }
   );
 }
+function ConsoleIcon({ size = 16 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": true,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "3", y: "4", width: "18", height: "16", rx: "2", stroke: "currentColor", strokeWidth: "1.5" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "path",
+          {
+            d: "M7 9.5 10.5 12 7 14.5",
+            stroke: "currentColor",
+            strokeWidth: "1.5",
+            strokeLinecap: "round",
+            strokeLinejoin: "round"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M12.5 15h4", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
+      ]
+    }
+  );
+}
+function MagicWandIcon({ size = 16 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": true,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M4 20 16.5 7.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "path",
+          {
+            d: "M7.5 3.5 8.4 6l2.5.9-2.5.9-.9 2.5L6.6 7.8 4.1 6.9l2.5-.9.9-2.5Z",
+            fill: "currentColor"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "path",
+          {
+            d: "M17 12.5 17.7 15l2.5.7-2.5.7-.7 2.5-.7-2.5-2.5-.7 2.5-.7.7-2.5Z",
+            fill: "currentColor"
+          }
+        )
+      ]
+    }
+  );
+}
+function ArtifactIcon({ size = 20 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": true,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M12 4.5 18.5 15.5H5.5L12 4.5Z", fill: "currentColor" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "7.5", cy: "18.5", r: "2.75", fill: "currentColor" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "13", y: "15.75", width: "6.5", height: "5.5", rx: "1.5", fill: "currentColor" })
+      ]
+    }
+  );
+}
 var iconButtonStyle = {
   display: "inline-flex",
   alignItems: "center",
@@ -546,6 +747,11 @@ function ArtifactCanvas(props) {
   const previewRef = (0, import_react.useRef)(null);
   const rootRef = (0, import_react.useRef)(null);
   const [isFullscreen, setIsFullscreen] = (0, import_react.useState)(false);
+  const [errors, setErrors] = (0, import_react.useState)([]);
+  const [consoleOpen, setConsoleOpen] = (0, import_react.useState)(false);
+  (0, import_react.useEffect)(() => {
+    setErrors([]);
+  }, [artifact?.artifact_id, artifact?.version]);
   (0, import_react.useEffect)(() => {
     const onChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onChange);
@@ -575,15 +781,45 @@ function ArtifactCanvas(props) {
     prompt(message);
     cancelSelect();
   };
+  const fixErrors = () => {
+    if (!prompt || !artifact) return;
+    if (errors.length > 0) {
+      const message = [
+        `The artifact "${artifact.title}" has the following errors:`,
+        ...errors.map(
+          (e) => `- ${e.kind}: ${e.message}${e.line != null ? ` (line ${e.line})` : ""}`
+        ),
+        "",
+        "Please fix these errors and update the artifact."
+      ].join("\n");
+      prompt(message);
+    } else {
+      prompt(
+        `The user asked you to fix the artifact "${artifact.title}". It may have visual or layout issues that were not auto-detected. Please review it and update the artifact with a fix.`
+      );
+    }
+  };
   (0, import_react.useEffect)(() => {
     if (!artifact || artifact.type !== "html" || !prompt) return;
     const onMessage = (event) => {
       const data = event.data;
       if (!data || data.v !== 1) return;
       if (event.origin !== "null") return;
+      if (!iframeWindows.has(event.source)) return;
       if (data.type === "artifact:select" && data.value != null) {
         const label = data.label != null ? ` (${data.label})` : "";
         prompt(`The user selected: ${String(data.value)}${label}`);
+      } else if (data.type === "artifact:error" && data.message != null) {
+        setErrors((prev) => [
+          ...prev,
+          {
+            kind: String(data.kind ?? "error"),
+            message: String(data.message),
+            source: data.source != null ? String(data.source) : void 0,
+            line: typeof data.line === "number" ? data.line : void 0,
+            col: typeof data.col === "number" ? data.col : void 0
+          }
+        ]);
       }
     };
     window.addEventListener("message", onMessage);
@@ -617,62 +853,9 @@ function ArtifactCanvas(props) {
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontWeight: 600 }, children: artifact.title }),
               artifact.version != null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(VersionSwitcher, { sessionId, artifact }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LivenessBadge, { live: isLive }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ViewToggle, { view, onChange: setView }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 } }),
               renderSlot("artifact.chrome", { artifact }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ViewToggle, { view, onChange: setView }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  onClick: () => {
-                    if (selectMode) cancelSelect();
-                    else {
-                      setSelectMode(true);
-                      setSelection(null);
-                      setAskText("");
-                    }
-                  },
-                  title: selectMode ? "Cancel" : "Select",
-                  "aria-label": selectMode ? "Cancel" : "Select",
-                  style: {
-                    ...iconButtonStyle,
-                    ...selectMode ? {
-                      background: "var(--dsw-alias-state-business-primary, #3b82f6)",
-                      color: "#fff"
-                    } : {}
-                  },
-                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CursorIcon, {})
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  onClick: () => navigator.clipboard.writeText(artifact.content),
-                  title: "Copy",
-                  "aria-label": "Copy",
-                  style: iconButtonStyle,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  onClick: () => downloadArtifact(artifact),
-                  title: "Download",
-                  "aria-label": "Download",
-                  style: iconButtonStyle,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  onClick: toggleFullscreen,
-                  title: isFullscreen ? "Exit fullscreen" : "Fullscreen",
-                  "aria-label": isFullscreen ? "Exit fullscreen" : "Fullscreen",
-                  style: iconButtonStyle,
-                  children: isFullscreen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FullscreenExitIcon, {}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconFullscreenOutline16, {})
-                }
-              ),
               closeDetails && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                 "button",
                 {
@@ -687,10 +870,14 @@ function ArtifactCanvas(props) {
           }
         ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref: previewRef, style: { flex: 1, minHeight: 0, position: "relative" }, children: [
-          view === "preview" ? renderSlot("artifact.renderer", { artifact }, {
-            entryKey: artifact.type,
-            fallback: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RawFallback, { artifact })
-          }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeRenderer, { artifact }),
+          view === "preview" ? renderSlot(
+            "artifact.renderer",
+            { artifact },
+            {
+              entryKey: artifact.type,
+              fallback: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RawFallback, { artifact })
+            }
+          ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeRenderer, { artifact }),
           selectMode && view === "preview" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectOverlay, { onSelect: setSelection }),
           selection && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "div",
@@ -754,8 +941,178 @@ function ArtifactCanvas(props) {
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: cancelSelect, "aria-label": "Cancel selection", children: "\u2715" })
               ]
             }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              style: {
+                position: "absolute",
+                bottom: "12px",
+                right: "12px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+                padding: "4px",
+                background: "var(--dsw-alias-bg-layer-2)",
+                border: "1px solid var(--dsw-alias-border-l3)",
+                borderRadius: "12px",
+                boxShadow: "var(--dsw-shadow-lv2)",
+                zIndex: 30
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    onClick: () => {
+                      if (selectMode) cancelSelect();
+                      else {
+                        setSelectMode(true);
+                        setSelection(null);
+                        setAskText("");
+                      }
+                    },
+                    title: selectMode ? "Cancel" : "Select",
+                    "aria-label": selectMode ? "Cancel" : "Select",
+                    style: {
+                      ...iconButtonStyle,
+                      ...selectMode ? {
+                        background: "var(--dsw-alias-state-business-primary, #3b82f6)",
+                        color: "#fff"
+                      } : {}
+                    },
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CursorIcon, {})
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    onClick: fixErrors,
+                    title: "Ask the AI to fix this artifact",
+                    "aria-label": "Ask the AI to fix this artifact",
+                    style: iconButtonStyle,
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MagicWandIcon, {})
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    onClick: () => navigator.clipboard.writeText(artifact.content),
+                    title: "Copy",
+                    "aria-label": "Copy",
+                    style: iconButtonStyle,
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconCopyOutline16, {})
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    onClick: () => downloadArtifact(artifact),
+                    title: "Download",
+                    "aria-label": "Download",
+                    style: iconButtonStyle,
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconDownloadOutline16, {})
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { position: "relative" }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      onClick: () => setConsoleOpen(!consoleOpen),
+                      title: "Console",
+                      "aria-label": "Console",
+                      style: iconButtonStyle,
+                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ConsoleIcon, {})
+                    }
+                  ),
+                  errors.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "span",
+                    {
+                      style: {
+                        position: "absolute",
+                        top: "-4px",
+                        right: "-4px",
+                        minWidth: "14px",
+                        height: "14px",
+                        padding: "0 3px",
+                        borderRadius: "7px",
+                        background: "var(--dsw-alias-state-error-primary)",
+                        color: "#fff",
+                        fontSize: "10px",
+                        lineHeight: "14px",
+                        textAlign: "center",
+                        pointerEvents: "none"
+                      },
+                      children: errors.length
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    onClick: toggleFullscreen,
+                    title: isFullscreen ? "Exit fullscreen" : "Fullscreen",
+                    "aria-label": isFullscreen ? "Exit fullscreen" : "Fullscreen",
+                    style: iconButtonStyle,
+                    children: isFullscreen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FullscreenExitIcon, {}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_dsh_client_ui_primitives.IconFullscreenOutline16, {})
+                  }
+                )
+              ]
+            }
           )
         ] }),
+        consoleOpen && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "div",
+          {
+            style: {
+              borderTop: "1px solid var(--dsw-alias-border-l3)",
+              maxHeight: "200px",
+              overflow: "auto",
+              background: "var(--dsw-alias-bg-layer-1)"
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "8px 12px"
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontWeight: 600 }, children: "Console" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: "var(--dsw-alias-label-secondary)", fontSize: "12px" }, children: errors.length === 0 ? "No errors" : `${errors.length} error${errors.length === 1 ? "" : "s"}` })
+                  ]
+                }
+              ),
+              errors.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: errors.map((e, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "div",
+                {
+                  style: {
+                    padding: "4px 12px",
+                    fontSize: "12px",
+                    borderTop: "1px solid var(--dsw-alias-border-l3)",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: "var(--dsw-alias-state-error-primary)", fontWeight: 600 }, children: e.kind }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: "var(--dsw-alias-label-primary)" }, children: [
+                      ": ",
+                      e.message
+                    ] }),
+                    e.line != null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: "var(--dsw-alias-label-tertiary)" }, children: [
+                      " ",
+                      "(line ",
+                      e.line,
+                      ")"
+                    ] })
+                  ]
+                },
+                i
+              )) })
+            ]
+          }
+        ),
         renderSlot("artifact.panel", { artifact }),
         renderSlot("artifact.interaction", { artifact })
       ]
@@ -783,9 +1140,31 @@ var CODE_EXT = {
   markdown: "md"
 };
 function downloadArtifact(artifact) {
-  const ext = artifact.type === "html" ? "html" : artifact.type === "code" ? CODE_EXT[artifact.language ?? ""] ?? artifact.language ?? "txt" : "md";
-  const mime = artifact.type === "html" ? "text/html" : artifact.type === "code" ? "text/plain" : "text/markdown";
-  const blob = new Blob([artifact.content], { type: mime });
+  let content = artifact.content;
+  let ext;
+  let mime;
+  if (artifact.type === "options") {
+    try {
+      const data = JSON.parse(artifact.content);
+      if (typeof data?.visual === "string") content = data.visual;
+    } catch {
+    }
+    ext = "html";
+    mime = "text/html";
+  } else if (artifact.type === "html") {
+    ext = "html";
+    mime = "text/html";
+  } else if (artifact.type === "code") {
+    ext = CODE_EXT[artifact.language ?? ""] ?? artifact.language ?? "txt";
+    mime = "text/plain";
+  } else if (artifact.type === "svg") {
+    ext = "svg";
+    mime = "image/svg+xml";
+  } else {
+    ext = "md";
+    mime = "text/markdown";
+  }
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -793,6 +1172,20 @@ function downloadArtifact(artifact) {
   a.click();
   URL.revokeObjectURL(url);
 }
+var TYPE_LABELS = {
+  html: "HTML",
+  markdown: "Markdown",
+  code: "Code",
+  svg: "SVG",
+  options: "Options"
+};
+var ACTION_TEXT = {
+  html: "Click to view",
+  markdown: "Click to view document",
+  code: "Click to view code",
+  svg: "Click to view image",
+  options: "Click to view options"
+};
 function ArtifactToolRow(props) {
   const artifact = artifactFromBlock(props.block);
   const openCanvas = props.openCanvas;
@@ -801,44 +1194,82 @@ function ArtifactToolRow(props) {
     if (artifact && sessionId) noteArtifact(sessionId, artifact);
   }, [sessionId, artifact?.artifact_id, artifact?.version]);
   if (!artifact) return null;
+  const actionText = ACTION_TEXT[artifact.type] ?? "Click to view";
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-    "div",
+    "button",
     {
+      type: "button",
+      onClick: () => {
+        if (sessionId) setSelected(sessionId, artifact);
+        openCanvas?.();
+      },
       style: {
-        padding: "8px 12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        width: "100%",
+        padding: "16px",
         border: "1px solid var(--dsw-alias-border-l3)",
-        borderRadius: "8px"
+        borderRadius: "12px",
+        background: "var(--dsw-alias-bg-layer-1)",
+        cursor: "pointer",
+        textAlign: "left",
+        font: "inherit",
+        color: "inherit",
+        appearance: "none"
       },
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontWeight: 600 }, children: artifact.title }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { opacity: 0.6 }, children: artifact.type }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 } }),
-          openCanvas && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              onClick: () => {
-                if (sessionId) setSelected(sessionId, artifact);
-                openCanvas();
-              },
-              children: "Open in canvas"
-            }
-          )
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { maxHeight: "220px", overflow: "hidden", marginTop: "8px" }, children: artifact.type === "html" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HtmlRenderer, { artifact }) : artifact.type === "code" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "pre",
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "div",
           {
             style: {
-              margin: 0,
-              padding: "8px",
-              overflow: "hidden",
-              whiteSpace: "pre-wrap",
-              fontFamily: "var(--dsw-font-markdown-code-block)",
-              fontSize: "12px"
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "40px",
+              height: "40px",
+              flexShrink: 0,
+              borderRadius: "8px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              color: "var(--dsw-alias-label-secondary)"
             },
-            children: artifact.content.slice(0, 2e3)
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ArtifactIcon, { size: 20 })
           }
-        ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MarkdownRenderer, { artifact }) })
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "span",
+              {
+                style: {
+                  fontWeight: 600,
+                  color: "var(--dsw-alias-label-primary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap"
+                },
+                children: artifact.title
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "span",
+              {
+                style: {
+                  flexShrink: 0,
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  letterSpacing: "0.02em",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                  background: "var(--dsw-alias-bg-layer-2)",
+                  color: "var(--dsw-alias-label-secondary)"
+                },
+                children: TYPE_LABELS[artifact.type] ?? artifact.type.toUpperCase()
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }, children: actionText })
+        ] })
       ]
     }
   );
@@ -889,6 +1320,14 @@ function apply(ctx) {
   ctx.slots.inject(
     "artifact.renderer",
     () => ctx.slots.register({ name: "artifact.renderer", key: "code" }, CodeRenderer)
+  );
+  ctx.slots.inject(
+    "artifact.renderer",
+    () => ctx.slots.register({ name: "artifact.renderer", key: "svg" }, SvgRenderer)
+  );
+  ctx.slots.inject(
+    "artifact.renderer",
+    () => ctx.slots.register({ name: "artifact.renderer", key: "options" }, OptionsRenderer)
   );
   ctx.slots.inject(
     "tool.call.toolview",

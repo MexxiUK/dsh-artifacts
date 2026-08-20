@@ -13,7 +13,7 @@ const name = "tool-artifact";
 
 const inject = ["tools", "systemPrompt"];
 
-const ARTIFACT_TYPES = ["html", "markdown", "code"];
+const ARTIFACT_TYPES = ["html", "markdown", "code", "svg", "options"];
 
 /** Slugify a title into a readable, URL-safe artifact id prefix. */
 function slugify(title) {
@@ -30,9 +30,14 @@ function apply(ctx) {
     name: "tool:artifact",
     order: 100,
     text: [
-      "Use the artifact tool to produce a self-contained, renderable deliverable — a styled HTML page, a report, a document, a diagram, or a source-code file — when the user asks for something that benefits from a dedicated preview rather than plain prose.",
-      "Prefer an artifact over prose when the deliverable is a complete document, page, or code file. Use action \"create\" for a new artifact; use action \"update\" with the returned artifact_id to revise an existing one (this creates a new version).",
-      "For type \"html\", emit a complete document including <!doctype html>, <html>, <head>, and <body>. For type \"markdown\", emit a complete Markdown document. For type \"code\", emit the raw source of a single code file and set \"language\" to its language id (e.g. python, typescript, javascript, go, rust, java, c, cpp, csharp, bash, json, yaml, html, css, sql).",
+      "Use an artifact for a complete, standalone deliverable — a full page, document, or code file that is long enough to be a real deliverable rather than a short answer, and that the user will likely want to keep, tweak, or build on.",
+      "When the user asks for a document, page, or code file (for example, a Markdown report, an HTML page, or a script), create it as an artifact directly. Do not write it to disk first — the artifact can be downloaded from the canvas, so a separate file is redundant.",
+      "Prefer an artifact when the content is clearer rendered than read: pages, diagrams, and code that belong in a viewer rather than in the message stream.",
+      "For a short answer or a quick note, reply in the chat instead — artifacts are for outputs that warrant their own space.",
+      "When you think the user would benefit from seeing ideas visually but they haven't asked (for example, when brainstorming designs or layouts), offer to demonstrate them in the canvas first and wait for them to agree. If they ask directly, create it without asking.",
+      "When the user asks for several options or directions (for example, \"show me two layouts\" or \"give me three concepts\"), present them in a single options artifact showing all the choices side by side — never a separate artifact for each. Keep each option a quick, rough sketch — just enough to convey the idea, not a polished design. Once the user picks one, develop that choice into a full deliverable.",
+      "Use action \"create\" for a new artifact; use action \"update\" with the returned artifact_id to revise an existing one (this creates a new version).",
+      "For type \"html\", emit a complete document including <!doctype html>, <html>, <head>, and <body>. For type \"markdown\", emit a complete Markdown document. For type \"svg\", emit a complete SVG document (a single <svg>...</svg> element). For type \"code\", emit the raw source of a single code file and set \"language\" to its language id (e.g. python, typescript, javascript, go, rust, java, c, cpp, csharp, bash, json, yaml, html, css, sql). For type \"options\", emit a JSON object with a \"visual\" (a complete HTML document that fills the canvas — set html and body to height: 100% and make the layout stretch to fill the full height) showing all the choices side by side.",
     ].join(" "),
   });
 
@@ -45,7 +50,7 @@ function apply(ctx) {
     defineTool({
       name: "artifact",
       description:
-        "Create or update a renderable artifact (HTML, Markdown, or source code) shown in the canvas viewer.",
+        "Create or update a renderable artifact (HTML, Markdown, SVG, code, or options) shown in the canvas viewer.",
       parameters: {
         action: {
           type: "string",
@@ -68,13 +73,13 @@ function apply(ctx) {
           required: true,
           enum: ARTIFACT_TYPES,
           description:
-            "Artifact kind: html (a full HTML document), markdown, or code (a single source-code file).",
+            "Artifact kind: html (a full HTML document), markdown, svg (a vector graphic), code (a single source-code file), or options (a visual showing several choices side by side).",
         },
         content: {
           type: "string",
           required: true,
           description:
-            "The complete artifact source. For html, a full document including <!doctype html>. For code, the raw source of the file.",
+            "The complete artifact source. For html, a full document including <!doctype html>. For svg, a complete <svg> element. For code, the raw source of the file. For options, a JSON object with a \"visual\" (a complete HTML document showing all the choices side by side).",
         },
         language: {
           type: "string",
